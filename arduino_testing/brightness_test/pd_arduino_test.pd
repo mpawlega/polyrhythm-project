@@ -1,0 +1,15 @@
+#N canvas 1911 0 1916 2011 12;
+#X obj 128 384 hsl 162 19 0 255 0 0 empty empty empty -2 -10 0 12 #fcfcfc #000000 #000000 0 1;
+#X floatatom 125 408 5 0 0 0 - - - 0;
+#X obj 125 431 int;
+#X obj 125 478 comport 3 9600;
+#X msg 265 73 Mode 2: Light Burst;
+#X msg 112 73 Mode 1: Bounce;
+#X msg 308 341 Control 2: Speed;
+#X msg 124 342 Control 1: Brightness;
+#X msg 454 341 Control 3: Start;
+#X msg 603 341 Control 4: Stop;
+#X msg 289 461 check why it didn't work before and review the code structure;
+#X connect 0 0 1 0;
+#X connect 1 0 2 0;
+#X connect 2 0 3 0;

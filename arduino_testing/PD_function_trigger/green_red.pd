@@ -1,0 +1,16 @@
+#N canvas 1427 351 1846 1348 12;
+#X msg 214 499 0;
+#X msg 407 500 1;
+#X obj 289 567 comport 3 9600;
+#X text 182 500 Red;
+#X text 439 500 Green;
+#X obj 210 445 bng 19 250 50 0 empty empty empty 0 -10 0 12 #fcfcfc #000000 #000000;
+#X obj 401 439 bng 19 250 50 0 empty empty empty 0 -10 0 12 #fcfcfc #000000 #000000;
+#X obj 243 534 pack f;
+#X obj 403 534 pack f;
+#X connect 0 0 7 0;
+#X connect 1 0 8 0;
+#X connect 5 0 0 0;
+#X connect 6 0 1 0;
+#X connect 7 0 2 0;
+#X connect 8 0 2 0;

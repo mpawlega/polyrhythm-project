@@ -68,6 +68,10 @@ MacIpPair macIpTable[] = {
 };
 const int numEntries = sizeof(macIpTable) / sizeof(macIpTable[0]);
 
+// --- my IP default settings ---
+IPAddress myIP(192, 168, 0, 250); // fallback
+String myIPstring = "192.168.0.250";
+
 // --- LAN settings ---
 IPAddress gatewayIP(192, 168, 0, 1);
 IPAddress subnetIP(255, 255, 255, 0);
@@ -142,8 +146,6 @@ void setup() {
   Serial.println(mac);
 
   // --- Lookup MAC address in table ---
-  IPAddress myIP(192, 168, 0, 250); // fallback
-  String myIPstring = "192.168.0.250";
   bool found = false;
   for (int i = 0; i < numEntries; i++) {
     if (mac.equalsIgnoreCase(macIpTable[i].mac)) {
@@ -153,13 +155,10 @@ void setup() {
       break;
     }
   }
-
   
   Serial.print("Assigned IP: ");
   Serial.println(myIP);
 
-  
-  
   // --- Connect to wifi ---
   WiFi.mode(WIFI_STA);
   WiFi.config(myIP, gatewayIP, subnetIP);
@@ -231,8 +230,6 @@ void loop() {
   // --- Receive UDP packets and parse them ---
   int packetSize = UDP.parsePacket();
 
-  // Serial.println("didn't get anything");
-
   if (packetSize) {
     int len = UDP.read(incomingPacket, 255);
     if (len > 0) incomingPacket[len] = 0;
@@ -246,6 +243,9 @@ void loop() {
 
     if (incomingPacket[0] == 'F') {
       int value = atoi(&incomingPacket[1]); // convert the rest to integer
+      
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Flashes to", value);
+
       Serial.print("Setting LED flashes to: ");
       Serial.println(value);
       setBlinkCode(value);

@@ -90,7 +90,7 @@
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 456.0, 98.0, 150.0, 60.0 ],
+					"patching_rect" : [ 456.0, 98.0, 151.0, 60.0 ],
 					"text" : "Fx sets the LED to flash X times at 10Hz in a 2s period. F0=off, F20=on.  The slider works too."
 				}
 

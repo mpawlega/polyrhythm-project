@@ -183,17 +183,26 @@ void setup() {
   WiFi.begin(apSSID, apPassword);
   setBlinkCode(5);    // blink 5 times while connecting to SSID
 
-  int attempt = 0;
-  while (WiFi.status() != WL_CONNECTED && attempt < 30) {
-    // blinkLed(200); // keep fast blink while connecting
+  Serial.print("Connecting");
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    attempt++;
+    Serial.print(".");
   }
+  Serial.println("\nConnected!");
+  Serial.print("Assigned IP: ");
+  Serial.println(WiFi.localIP());
+
+  // int attempt = 0;
+  // while (WiFi.status() != WL_CONNECTED && attempt < 30) {
+  //   // blinkLed(200); // keep fast blink while connecting
+  //   delay(500);
+  //   attempt++;
+  // }
 
   if (WiFi.status() == WL_CONNECTED) {
     isConnected = true;
 
-    setBlinkCode(1);    // turn LED on solid
+    setBlinkCode(20);    // turn LED on solid
 
     // Start listening for UDP from MAX
     UDP.begin(listenPort);
@@ -203,16 +212,22 @@ void setup() {
     Serial.println(listenPort);
 
   } else {
-    // this code actually never gets executed because there isn't a max limit in the WHILE loop above
     Serial.println();
     Serial.println("Failed to connect to AP after several attempts.");
   }
 
+   delay(500); // give the TCP stack a moment to settle
+    Serial.println("Starting OTA...");
+    String host = "D1mini_" + String(WiFi.localIP()[3]);
+    ArduinoOTA.setHostname(host.c_str());
+    ArduinoOTA.begin();
+    Serial.println("OTA setup complete");
+
   // Set up listener for OTA programming
-  String host = "D1mini_" + String(WiFi.localIP()[3]);
-  ArduinoOTA.setHostname(host.c_str());
-  ArduinoOTA.begin();
-  Serial.println("OTA setup complete");
+  // String host = "D1mini_" + String(WiFi.localIP()[3]);
+  // ArduinoOTA.setHostname(host.c_str());
+  // ArduinoOTA.begin();
+  // Serial.println("OTA setup complete");
 
   // Note sendUDPMessage can't handle String types directly; append .c_str() to send a *char
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Mac address", mac.c_str());

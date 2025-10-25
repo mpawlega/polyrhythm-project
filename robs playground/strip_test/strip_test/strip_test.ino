@@ -5,8 +5,47 @@
 #include <OSCBoards.h>
 #include <stdarg.h>
 #include <ArduinoOTA.h>
+#include <FastLED.h>
 
-// LED blinking interrupt stuff
+// LED strip definitions
+#define NUM_LEDS 192
+#define DATA_PIN D1
+#define DATA_PIN_MIDDLE D2
+#define DEFAULT_STRIP_PERIOD 2   // in seconds
+
+
+// strip timing setup
+Ticker stripTicker;
+bool updateLEDs = false;
+int  stripPeriod = DEFAULT_STRIP_PERIOD * 1000 / 2 / NUM_LEDS;  // in ms
+
+// The "ball" is conceived as having a position (centre) and "halo" that is BALL_HALO
+// pixels. To avoid having to treat the end-points as edge cases, we can define
+// the LED array as being NUM_LEDS + 2*BALL_HALO long, and just pass to fastled
+// the NUM_LEDS elements from the middle of the array such that the ball centre 
+// goes right to the edges.
+// - ballPosition starts at BALL_HALO index
+// - when ballPosition reaches BALL_HALO or BALL_HALO+NUM_LEDS, turn around
+// - pass &leds[BALL_HALO] to addleds() instead of passing leds
+
+// ball size parameters
+#define BALL_HALO 3
+int ballPosition = BALL_HALO;
+int ballDirection = 1;
+
+// create the led struct arrays with BALL_HALO elements on ends to help with bouncing
+CRGB leds[NUM_LEDS+2*BALL_HALO];
+CRGB ledsMiddle[NUM_LEDS+2*BALL_HALO];
+
+int last_millis = 0;
+// int delay_time = 50;
+// int bounce_delay_time = 75;
+// int trail_length = 15;
+// int bounce_length = 30;
+// int brightness[15] = {255, 238, 221, 204, 187, 170, 153, 
+//                       136, 119, 102,  85,  68,  51,  38, 24};
+
+// Status LED blinking interrupt stuff
 const int LED_PIN = LED_BUILTIN;   // Active-LOW on Wemos D1 mini/lite
 Ticker blinkTicker;
 Ticker cycleTicker;
@@ -16,8 +55,8 @@ volatile int currentFlash = 0;
 volatile bool ledState = false;
 
 // LED timing constants
-const float FLASH_INTERVAL = 0.05; // seconds per half-cycle → 10 Hz full blink
-const float CYCLE_PERIOD = 2.0;    // seconds total per code cycle
+const float FLASH_INTERVAL = 50; // milli-seconds per half-cycle → 10 Hz full blink
+const float CYCLE_PERIOD = 2000;    // milli-seconds total per code cycle
 
 // LED ISRs - setBlinkCode(N=2..20) flashes N times in 2s at 10Hz (0=off, 20=on)
 void toggleLedISR() {
@@ -47,6 +86,22 @@ void toggleLedISR() {
 // Called once per cycle to reset flash counter
 void startBlinkCycleISR() {
   currentFlash = 0;
+}
+
+// Called every PERIOD/2/NUM_LEDS
+void updateStripISR() {
+  updateLEDs = true;
+}
+
+// Call to redraw the ball at ball_position
+void drawBall(int pos) {
+
+  // shift the ball one in ballDirection
+  leds[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
+  leds[pos-ballDirection] = CHSV(0,0,128);
+  leds[pos] = CHSV(0,0,255);
+  leds[pos+ballDirection*(BALL_HALO)] = CHSV(0,0,128);
+
 }
 
 // Call this from main code to change the blink code dynamically
@@ -79,7 +134,7 @@ IPAddress MAXhostIP(192,168,0,200);
 const char* apSSID = "MargaretAve";
 const char* apPassword = "robmaudamelinesimonluc";
 
-// --- Connection state tracking ---
+// --- LAN Connection state tracking ---
 bool isConnected = false;
 
 // UDP setup stuff
@@ -105,11 +160,6 @@ void sendUDPMessage(OSCMessage* msg_ptr, IPAddress receiver_IP, T first_msg) {
   (*msg_ptr).send(UDP);
   delay(100);     // delay a bit in case of consecutive messages
 
-  // if (msg_ptr!=&dataMsg) {
-  //   (*msg_ptr).send(Serial);     // this isn't very pretty but works
-  //   Serial.println();
-  // }
-
   (*msg_ptr).empty();
   UDP.endPacket();
 }
@@ -126,19 +176,31 @@ void sendUDPMessage(OSCMessage* msg_ptr, IPAddress receiver_IP, T first_msg, Arg
 
 void setup() {
 
-  // attach LED timer interrupts
-  blinkTicker.attach(FLASH_INTERVAL, toggleLedISR);
-  cycleTicker.attach(CYCLE_PERIOD, startBlinkCycleISR);
-  setBlinkCode(2);      // 2 flashes
-
   // Serial debugging start
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH); // off
 
   delay(1000);
-  Serial.println();
+  Serial.println("Serial up");
 
+// set up LED strips
+  // pass a pointer to the 2nd element, rather than the entire array
+  // because of the "bounce halo"
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(&leds[BALL_HALO], NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN_MIDDLE>(&ledsMiddle[BALL_HALO], NUM_LEDS);
+  FastLED.clear();
+  FastLED.show();
+
+  // attach timer interrupts
+  stripTicker.attach_ms(stripPeriod, updateStripISR);
+  blinkTicker.attach_ms(FLASH_INTERVAL, toggleLedISR);
+  cycleTicker.attach_ms(CYCLE_PERIOD, startBlinkCycleISR);
+  setBlinkCode(2);      // 2 flashes
+
+  Serial.print("Set strip period to (s) ");
+  Serial.println(stripPeriod);
+  
   // get MAC address
   String mac = WiFi.macAddress();
   mac.toUpperCase();
@@ -192,13 +254,6 @@ void setup() {
   Serial.print("Assigned IP: ");
   Serial.println(WiFi.localIP());
 
-  // int attempt = 0;
-  // while (WiFi.status() != WL_CONNECTED && attempt < 30) {
-  //   // blinkLed(200); // keep fast blink while connecting
-  //   delay(500);
-  //   attempt++;
-  // }
-
   if (WiFi.status() == WL_CONNECTED) {
     isConnected = true;
 
@@ -223,12 +278,6 @@ void setup() {
     ArduinoOTA.begin();
     Serial.println("OTA setup complete");
 
-  // Set up listener for OTA programming
-  // String host = "D1mini_" + String(WiFi.localIP()[3]);
-  // ArduinoOTA.setHostname(host.c_str());
-  // ArduinoOTA.begin();
-  // Serial.println("OTA setup complete");
-
   // Note sendUDPMessage can't handle String types directly; append .c_str() to send a *char
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Mac address", mac.c_str());
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Connected to", apSSID);
@@ -238,9 +287,7 @@ void setup() {
   
 }
 
-void loop() {
-  // activate OTA programming
-  ArduinoOTA.handle();
+void handleUDP() {
   
   // --- Receive UDP packets and parse them ---
   int packetSize = UDP.parsePacket();
@@ -248,22 +295,61 @@ void loop() {
   if (packetSize) {
     int len = UDP.read(incomingPacket, 255);
     if (len > 0) incomingPacket[len] = 0;
+    int value = atoi(&incomingPacket[1]); // convert the rest to integer
 
-    Serial.print("I got one! ");
-    Serial.println(incomingPacket);
+    // Serial.print("I got one! ");
+    // Serial.println(incomingPacket);
 
-    if (strcmp(incomingPacket,"zero")==0) {
-      setBlinkCode(0);
-    }
-
-    if (incomingPacket[0] == 'F') {
-      int value = atoi(&incomingPacket[1]); // convert the rest to integer
+    switch (incomingPacket[0]) {
+      case 'F': 
+    // if (incomingPacket[0] == 'F') {
       
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Flashes to", value);
 
-      Serial.print("Setting LED flashes to: ");
-      Serial.println(value);
       setBlinkCode(value);
+      break;
+
+      case 'P':
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Period to", value);
+      stripTicker.attach_ms(value * 500 / NUM_LEDS, updateStripISR);
+      break;
+
+      default:
+      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Unexpected:", value);
+      break;
+
     }
   }
+
+}
+
+void loop() {
+  
+  ArduinoOTA.handle();      // check for OTA programming flag
+  handleUDP();              // Check for UDP packets and parse them
+
+  // check if an LED update is needed
+  if (updateLEDs) {
+  // if ((millis()-last_millis)>=stripPeriod) {
+    last_millis = millis();
+
+    // update ball position
+    ballPosition += ballDirection;
+
+    // draw the ball
+    drawBall(ballPosition);
+
+    // check limits and bounce if needed
+    if(ballPosition == BALL_HALO || ballPosition == BALL_HALO + NUM_LEDS - 1) {
+      ballDirection = -ballDirection;  // reverse direction
+    }
+    
+    FastLED.show();
+
+    updateLEDs = false;
+
+  }
+
+
+  
 }

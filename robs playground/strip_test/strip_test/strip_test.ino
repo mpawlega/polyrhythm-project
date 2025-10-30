@@ -7,37 +7,59 @@
 #include <ArduinoOTA.h>
 #include <FastLED.h>
 
+// compile timestamp
+const char* versionCode = __DATE__ " " __TIME__;
+#pragma message "\nBuilding at: " __DATE__ " " __TIME__
+
 // LED strip definitions
 #define NUM_LEDS 192
 #define DATA_PIN D1
-#define DATA_PIN_MIDDLE D2
-#define DEFAULT_STRIP_PERIOD 2   // in seconds
-
+#define DATA_PIN_SIDES D2
+#define DEBUG_PIN D7
+#define DEFAULT_STRIP_PERIOD 7   // in seconds
 
 // strip timing setup
 Ticker stripTicker;
-bool updateLEDs = false;
-int  stripPeriod = DEFAULT_STRIP_PERIOD * 1000 / 2 / NUM_LEDS;  // in ms
+int  stripDelay = DEFAULT_STRIP_PERIOD * 1000000 / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
+bool runShow = false;
+int  measuredPeriod = 0;
+int  numPeriods = 0;
+unsigned long last_LEDupdate = 0;
+unsigned long lastPeriodStart = 0;
 
-// The "ball" is conceived as having a position (centre) and "halo" that is BALL_HALO
-// pixels. To avoid having to treat the end-points as edge cases, we can define
-// the LED array as being NUM_LEDS + 2*BALL_HALO long, and just pass to fastled
-// the NUM_LEDS elements from the middle of the array such that the ball centre 
+
+// The "ball" is conceived as being in a 3x3 matrix, or a pixel with a 1-pixel BALL_HALO.
+// To avoid having to treat the end-points 
+// as edge cases when the ball has just reversed but we still have a halo, we can 
+// define the LED array as being NUM_LEDS + 2*BALL_HALO long, and just pass 
+// to fastled the NUM_LEDS elements from the middle of the array such that the ball centre 
 // goes right to the edges.
-// - ballPosition starts at BALL_HALO index
-// - when ballPosition reaches BALL_HALO or BALL_HALO+NUM_LEDS, turn around
+// - ballPosition starts at BALL_HALO index (because array is zero-indexed)
+// - when ballPosition reaches BALL_HALO or BALL_HALO+NUM_LEDS-1, turn around
 // - pass &leds[BALL_HALO] to addleds() instead of passing leds
 
-// ball size parameters
-#define BALL_HALO 3
-int ballPosition = BALL_HALO;
-int ballDirection = 1;
+// ball parameters
+#define BALL_HALO 1
+#define MAX_TAIL_LENGTH 10
+#define DEFAULT_BALL_HUE 213
+int tailLength = 0;
+int ballPosition = BALL_HALO+NUM_LEDS-1;      // starts at the bottom of the strip
+int ballDirection = -1;
+int ballHue = DEFAULT_BALL_HUE;
 
-// create the led struct arrays with BALL_HALO elements on ends to help with bouncing
+// create the RGB led struct arrays with BALL_HALO elements on ends to help with bouncing
+// valid array indices go from 0 to NUM_LEDS+2*BALL_HALO-1
 CRGB leds[NUM_LEDS+2*BALL_HALO];
-CRGB ledsMiddle[NUM_LEDS+2*BALL_HALO];
+CRGB ledsSides[NUM_LEDS+2*BALL_HALO];
+// CRGB leds[NUM_LEDS+2*(BALL_HALO+MAX_TAIL_LENGTH)];
+// CRGB ledsSides[NUM_LEDS+2*(BALL_HALO+MAX_TAIL_LENGTH)];
 
-int last_millis = 0;
+// construct some HSV arrays to hold the animation pieces so it's easy to adjust hue and value
+// CHSV ball[2][3] = {
+//   { CHSV(DEFAULT_BALL_HUE,255,0), CHSV(DEFAULT_BALL_HUE,255,128), CHSV(DEFAULT_BALL_HUE,255,0) },
+//   { CHSV(DEFAULT_BALL_HUE,255,128), CHSV(DEFAULT_BALL_HUE,255,255), CHSV(DEFAULT_BALL_HUE,255,128) }
+// };
+
 // int delay_time = 50;
 // int bounce_delay_time = 75;
 // int trail_length = 15;
@@ -88,19 +110,63 @@ void startBlinkCycleISR() {
   currentFlash = 0;
 }
 
-// Called every PERIOD/2/NUM_LEDS
-void updateStripISR() {
-  updateLEDs = true;
+// Build ball matrix
+void makeBall(int hue) {
+
+  // for (int row = 0; row < 2; row++) {
+  //   for (int col = 0; col < 3; col++) {
+  //       ball[row][col].h = hue;   // set hue for every pixel
+  //   }
+  // }
+
+
 }
 
 // Call to redraw the ball at ball_position
 void drawBall(int pos) {
 
-  // shift the ball one in ballDirection
+  // need to adjust pixels from one ahead of pos, to 1+tailLength+1 behind pos
+  // switch (ballDirection) {
+  //   case 1:                   // going up
+  //     for (int i=0; i<MAX_TAIL_LENGTH; i++) {
+  //       ledsSides[pos-(BALL_HALO+1+i)] = tail[1][i];
+  //       leds[pos-(BALL_HALO+1+i)] = tail[2][i];
+  //     }
+  //     for (int i=0; i<(1+2*BALL_HALO); i++) {
+  //       ledsSides[pos-(BALL_HALO-i)] = ball[1][i];
+  //       leds[pos-(BALL_HALO-i)] = ball[2][i];
+  //     }
+        
+  //   break;
+
+  //   case -1:                  // going down
+  //     for (int i=0; i<MAX_TAIL_LENGTH; i++) {
+  //       ledsSides[pos+(BALL_HALO+1+i)] = tail[1][i];
+  //       leds[pos+(BALL_HALO+1+i)] = tail[2][i];
+  //     }
+  //     for (int i=0; i<(1+2*BALL_HALO); i++) {
+  //       ledsSides[pos+(BALL_HALO-i)] = ball[1][i];
+  //       leds[pos+(BALL_HALO-i)] = ball[2][i];
+  //     }
+
+  //   break;
+  // }
+
+  // if somehow we get passed a value that is outside the range
+  // constrain it to avoid array indexing over- or underflow
+  constrain(pos,BALL_HALO,BALL_HALO+NUM_LEDS-1);
+
+  // // shift the centre strip one in ballDirection
   leds[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
-  leds[pos-ballDirection] = CHSV(0,0,128);
-  leds[pos] = CHSV(0,0,255);
-  leds[pos+ballDirection*(BALL_HALO)] = CHSV(0,0,128);
+  leds[pos-ballDirection] = CHSV(213,255,255);
+  leds[pos] = CHSV(213,255,255);
+  leds[pos+ballDirection*(BALL_HALO)] = CHSV(213,255,255);
+
+  // // side strips = copy centre strip at half-brightness (value)
+  ledsSides[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
+  ledsSides[pos-ballDirection] = CHSV(213,255,255);
+  ledsSides[pos] = CHSV(213,255,255);
+  ledsSides[pos+ballDirection*(BALL_HALO)] = CHSV(213,255,255);
 
 }
 
@@ -179,27 +245,38 @@ void setup() {
   // Serial debugging start
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
+  pinMode(DEBUG_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(DATA_PIN_SIDES, OUTPUT);
   digitalWrite(LED_PIN, HIGH); // off
-
+  digitalWrite(DATA_PIN, LOW); // off
+  digitalWrite(DATA_PIN_SIDES, LOW); // off
+  
   delay(1000);
   Serial.println("Serial up");
 
 // set up LED strips
   // pass a pointer to the 2nd element, rather than the entire array
   // because of the "bounce halo"
-  FastLED.addLeds<NEOPIXEL, DATA_PIN>(&leds[BALL_HALO], NUM_LEDS);
-  FastLED.addLeds<NEOPIXEL, DATA_PIN_MIDDLE>(&ledsMiddle[BALL_HALO], NUM_LEDS);
+  FastLED.addLeds<WS2811, DATA_PIN>(&leds[BALL_HALO], NUM_LEDS);
+  FastLED.addLeds<WS2811, DATA_PIN_SIDES>(&ledsSides[BALL_HALO], NUM_LEDS);
+
+  // FastLED.addLeds<NEOPIXEL, DATA_PIN>(&leds[BALL_HALO+MAX_TAIL_LENGTH], NUM_LEDS);
+  // FastLED.addLeds<NEOPIXEL, DATA_PIN_SIDES>(&ledsSides[BALL_HALO+MAX_TAIL_LENGTH], NUM_LEDS);
   FastLED.clear();
   FastLED.show();
 
+  // make ball and tail
+  // makeBall(ballHue);
+  // makeTail(tailLength);
+
   // attach timer interrupts
-  stripTicker.attach_ms(stripPeriod, updateStripISR);
   blinkTicker.attach_ms(FLASH_INTERVAL, toggleLedISR);
   cycleTicker.attach_ms(CYCLE_PERIOD, startBlinkCycleISR);
   setBlinkCode(2);      // 2 flashes
 
   Serial.print("Set strip period to (s) ");
-  Serial.println(stripPeriod);
+  Serial.println(stripDelay);
   
   // get MAC address
   String mac = WiFi.macAddress();
@@ -243,6 +320,7 @@ void setup() {
 
   Serial.println("Found AP, attempting to connect...");
   WiFi.begin(apSSID, apPassword);
+  // WiFi.setSleepMode(WIFI_NONE_SLEEP);
   setBlinkCode(5);    // blink 5 times while connecting to SSID
 
   Serial.print("Connecting");
@@ -271,24 +349,64 @@ void setup() {
     Serial.println("Failed to connect to AP after several attempts.");
   }
 
-   delay(500); // give the TCP stack a moment to settle
-    Serial.println("Starting OTA...");
-    String host = "D1mini_" + String(WiFi.localIP()[3]);
-    ArduinoOTA.setHostname(host.c_str());
-    ArduinoOTA.begin();
-    Serial.println("OTA setup complete");
+  
+  // Set up Arduino OTA
+  delay(500); // give the TCP stack a moment to settle
+
+  // ArduinoOTA.onStart([]() {
+  //   Serial.println("OTA start: pausing animation");
+  //   runShow = false;    // automatically pause the show
+  // });
+
+  // ArduinoOTA.onEnd([]() {
+  //   Serial.println("\nOTA end: resuming animation");
+  //   runShow = true;     // resume animation after OTA
+  // });
+
+  // ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+  //   Serial.printf("OTA progress: %u%%\r", (progress * 100) / total);
+  // });
+
+  // ArduinoOTA.onError([](ota_error_t error) {
+  //   Serial.printf("OTA error[%u]: ", error);
+  //   if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+  //   else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+  //   else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+  //   else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+  //   else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  //   runShow = true; // make sure show resumes even on error
+  // });
+
+  Serial.println("Starting OTA...");
+  String host = "D1mini_" + String(WiFi.localIP()[3]);
+  ArduinoOTA.setHostname(host.c_str());
+  ArduinoOTA.begin();
+  Serial.println("OTA setup complete");
 
   // Note sendUDPMessage can't handle String types directly; append .c_str() to send a *char
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Mac address", mac.c_str());
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Connected to", apSSID);
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Listening for UDP on", listenPort);
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Sending UDP on", sendPort);
-  sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Finished setup.");
+  sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Timestep:", stripDelay, "(us)");
+  sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Finished setup.  Version code", versionCode);
+
   
 }
 
+int last_UDPheartbeat = 0;
+
 void handleUDP() {
   
+  // // Send UDP heartbeat -- NOTE THIS CAUSES STUTTER IN THE DISPLAY SO DON'T CALL DURING SHOW
+  if (!runShow) {
+    if ((millis()-last_UDPheartbeat) > 5000) {
+      last_UDPheartbeat = millis();
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "UDP Heartbeat");
+    }
+  }
+
+
   // --- Receive UDP packets and parse them ---
   int packetSize = UDP.parsePacket();
 
@@ -302,20 +420,53 @@ void handleUDP() {
 
     switch (incomingPacket[0]) {
       case 'F': 
-    // if (incomingPacket[0] == 'F') {
-      
-      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Flashes to", value);
-
       setBlinkCode(value);
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Flashes to", value);
       break;
 
       case 'P':
-      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Period to", value);
-      stripTicker.attach_ms(value * 500 / NUM_LEDS, updateStripISR);
+      stripDelay = value * 1000000 / 2 / (NUM_LEDS-1);
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay);
+      break;
+
+      case 'S':
+      runShow = value;
+      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Run Show:", runShow, "Position", ballPosition, "Direction", ballDirection);
+      break;
+
+      case 'V':
+      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Version Code:", versionCode);
+      break;
+
+      case 'T':
+      stripDelay = value;
+      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Strip Timestep:", stripDelay);
+      break;
+
+      case 'L':
+      // the strip is reversed compared to the MAX sliders
+      // both are zero-indexed but 0 is at the top of the strip and bottom of the MAX slider
+      // we also have the BALL_HALO to deal with, so...
+      //
+      // the "top" of the strip is NUM_LEDS-1 in MAX and BALL_HALO here while
+      // the "bottom" of the strip is 0 in MAX and BALL_HALO+NUM_LEDS-1 here
+      ballPosition = (NUM_LEDS+BALL_HALO-1) - value;
+
+      // The default ball direction for most starting points should be "down" on the strip which is +1
+      // the exception is if the starting point is BALL_HALO+NUM_LEDS-1 which is the bottom of the strip
+      // setting ballDirection=1 in that case will result in a little hiccup but the constrain call in 
+      // drawBall will avoid an array indexing issue.  This should only happen if the position happens
+      // to be updated right at the point where the ball hits that pixel, so I'm not going to make an 
+      // exception.  If we start to see the ball "sticking" to the bottom momentarily before bouncing
+      // then we can come back and make an exception
+      ballDirection = (ballPosition == BALL_HALO+NUM_LEDS-1) ? -1 : 1;
+      FastLED.clear();
+      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting Position:", ballPosition);
       break;
 
       default:
-      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Unexpected:", value);
+      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Received Unknown Message");
+
       break;
 
     }
@@ -328,28 +479,33 @@ void loop() {
   ArduinoOTA.handle();      // check for OTA programming flag
   handleUDP();              // Check for UDP packets and parse them
 
-  // check if an LED update is needed
-  if (updateLEDs) {
-  // if ((millis()-last_millis)>=stripPeriod) {
-    last_millis = millis();
+  if (runShow) {
+    // check if an LED update is needed
+    if ((micros()-last_LEDupdate)>=stripDelay) {
+      last_LEDupdate = micros();
 
-    // update ball position
-    ballPosition += ballDirection;
+      // update ball position
+      ballPosition += ballDirection;
 
-    // draw the ball
-    drawBall(ballPosition);
+      // draw the ball
+      drawBall(ballPosition);
 
-    // check limits and bounce if needed
-    if(ballPosition == BALL_HALO || ballPosition == BALL_HALO + NUM_LEDS - 1) {
-      ballDirection = -ballDirection;  // reverse direction
+      // check limits and bounce if needed
+      if(ballPosition <= BALL_HALO || ballPosition >= BALL_HALO + NUM_LEDS - 1) {
+        ballDirection = -ballDirection;  // reverse direction
+
+        if (ballDirection == -1) {          // if we're at 191 and just starting up again
+          numPeriods+=1;
+          measuredPeriod = micros() - lastPeriodStart;
+          lastPeriodStart = micros();
+          // sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), numPeriods, measuredPeriod);
+        }
+      }
+      
+      digitalWrite(DEBUG_PIN,HIGH);
+      FastLED.show();
+      digitalWrite(DEBUG_PIN,LOW);
     }
-    
-    FastLED.show();
-
-    updateLEDs = false;
-
   }
 
-
-  
 }

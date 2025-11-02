@@ -11,6 +11,11 @@
 const char* versionCode = __DATE__ " " __TIME__;
 #pragma message "\nBuilding at: " __DATE__ " " __TIME__
 
+// jitter storage stuff
+#define JITTER_SAMPLES 10000
+int16_t jitter[JITTER_SAMPLES];
+uint16_t sampleIndex = 0;
+
 // LED strip definitions
 #define NUM_LEDS 192
 #define DATA_PIN D1
@@ -212,6 +217,7 @@ char incomingPacket[255];
 // initialize OSC message addresses/headers
 OSCMessage debugMsg("/debug");
 OSCMessage statusMsg("/status");
+OSCMessage dataMsg("/data");
 
 template<typename T>
 void sendUDPMessage(OSCMessage* msg_ptr, IPAddress receiver_IP, T first_msg) {
@@ -300,6 +306,7 @@ void setup() {
 
   // --- Connect to wifi ---
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_MODEM_SLEEP);
   WiFi.config(myIP, gatewayIP, subnetIP);
 
   Serial.print("Looking for AP \""); Serial.print(apSSID); Serial.println("\"...");
@@ -320,7 +327,6 @@ void setup() {
 
   Serial.println("Found AP, attempting to connect...");
   WiFi.begin(apSSID, apPassword);
-  // WiFi.setSleepMode(WIFI_NONE_SLEEP);
   setBlinkCode(5);    // blink 5 times while connecting to SSID
 
   Serial.print("Connecting");
@@ -398,13 +404,7 @@ int last_UDPheartbeat = 0;
 
 void handleUDP() {
   
-  // // Send UDP heartbeat -- NOTE THIS CAUSES STUTTER IN THE DISPLAY SO DON'T CALL DURING SHOW
-  if (!runShow) {
-    if ((millis()-last_UDPheartbeat) > 5000) {
-      last_UDPheartbeat = millis();
-      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "UDP Heartbeat");
-    }
-  }
+
 
 
   // --- Receive UDP packets and parse them ---
@@ -422,6 +422,13 @@ void handleUDP() {
       case 'F': 
       setBlinkCode(value);
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Flashes to", value);
+      break;
+
+      case 'J':
+      for (int i=0;i<sampleIndex;i++) {
+        sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), jitter[i]);
+      }
+      sampleIndex = 0;
       break;
 
       case 'P':
@@ -474,15 +481,34 @@ void handleUDP() {
 
 }
 
+
 void loop() {
   
-  ArduinoOTA.handle();      // check for OTA programming flag
   handleUDP();              // Check for UDP packets and parse them
 
+  uint32_t actualElapsed = micros() - last_LEDupdate;  // rollover-safe
+  
   if (runShow) {
+
+    // // disconnect wifi
+    // if (WiFi.status() == WL_CONNECTED) {
+    //   WiFi.disconnect(true);  // disconnect and erase saved credentials
+    //   WiFi.mode(WIFI_OFF);   // turn WiFi off to save power
+    // }
+
     // check if an LED update is needed
-    if ((micros()-last_LEDupdate)>=stripDelay) {
+    if (actualElapsed >= stripDelay) {
       last_LEDupdate = micros();
+
+      // measure jitter
+      int32_t jitter32 = (int32_t)actualElapsed - (int32_t)stripDelay;
+      int16_t jitter16 = constrain(jitter32, -32768, 32767);
+      jitter[sampleIndex++] = (int16_t)jitter16;
+
+      if (sampleIndex >= JITTER_SAMPLES) {
+        runShow = false;
+        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Jitter matrix full:", sampleIndex);
+      }
 
       // update ball position
       ballPosition += ballDirection;
@@ -505,7 +531,29 @@ void loop() {
       digitalWrite(DEBUG_PIN,HIGH);
       FastLED.show();
       digitalWrite(DEBUG_PIN,LOW);
+      
     }
+  } else {    // if show not running
+    
+    // if (WiFi.status() != WL_CONNECTED) {
+    //   // To enable WiFi again:
+    //   WiFi.mode(WIFI_STA);   // station mode
+    //   WiFi.begin(apSSID, apPassword);  // reconnect with your credentials
+      
+    //   while (WiFi.status() != WL_CONNECTED) {
+    //     delay(500);
+    //   }
+    // }
+
+    // Check for OTA; don't need to do this if show is running
+    ArduinoOTA.handle();      // check for OTA programming flag
+
+    // Send UDP heartbeat -- NOTE THIS CAUSES STUTTER IN THE DISPLAY SO DON'T CALL DURING SHOW
+    if ((millis()-last_UDPheartbeat) > 5000) {
+      last_UDPheartbeat = millis();
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "UDP Heartbeat");
+    }
+
   }
 
 }

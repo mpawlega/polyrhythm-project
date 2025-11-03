@@ -22,16 +22,24 @@ uint16_t sampleIndex = 0;
 #define DATA_PIN_SIDES D2
 #define DEBUG_PIN D7
 #define DEFAULT_STRIP_PERIOD 7   // in seconds
+#define FAST_LED_BLOCKING_TIME 14000 // in us
 
 // strip timing setup
-Ticker stripTicker;
-int  stripDelay = DEFAULT_STRIP_PERIOD * 1000000 / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
+// Ticker stripTicker;
+// bool updateLEDs = false;
+unsigned int  stripDelay = DEFAULT_STRIP_PERIOD * 1000000 / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
 bool runShow = false;
-int  measuredPeriod = 0;
-int  numPeriods = 0;
+unsigned int  measuredPeriod = 0;
+unsigned int  numPeriods = 0;
+int32_t  maxJitter = 0;
 unsigned long last_LEDupdate = 0;
 unsigned long lastPeriodStart = 0;
+unsigned long nextLEDupdate = 0;
 
+// // Called every timestep
+// void updateStripISR() {
+//   updateLEDs = true;
+// }
 
 // The "ball" is conceived as being in a 3x3 matrix, or a pixel with a 1-pixel BALL_HALO.
 // To avoid having to treat the end-points 
@@ -161,17 +169,21 @@ void drawBall(int pos) {
   // constrain it to avoid array indexing over- or underflow
   constrain(pos,BALL_HALO,BALL_HALO+NUM_LEDS-1);
 
-  // // shift the centre strip one in ballDirection
-  leds[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
-  leds[pos-ballDirection] = CHSV(213,255,255);
-  leds[pos] = CHSV(213,255,255);
-  leds[pos+ballDirection*(BALL_HALO)] = CHSV(213,255,255);
+  for (int led=pos+BALL_HALO; led>=pos-BALL_HALO; led--) {
+    leds[led] = CHSV(213,255,255);
+    ledsSides[led] = CHSV(213,255,255);
+  }
 
-  // // side strips = copy centre strip at half-brightness (value)
-  ledsSides[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
-  ledsSides[pos-ballDirection] = CHSV(213,255,255);
-  ledsSides[pos] = CHSV(213,255,255);
-  ledsSides[pos+ballDirection*(BALL_HALO)] = CHSV(213,255,255);
+  // leds[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
+  // leds[pos-ballDirection] = CHSV(213,255,255);
+  // leds[pos] = CHSV(213,255,255);
+  // leds[pos+ballDirection*(BALL_HALO)] = CHSV(213,255,255);
+
+  // // // side strips = copy centre strip at half-brightness (value)
+  // ledsSides[pos-ballDirection*(BALL_HALO+1)] = CHSV(0,0,0);
+  // ledsSides[pos-ballDirection] = CHSV(213,255,255);
+  // ledsSides[pos] = CHSV(213,255,255);
+  // ledsSides[pos+ballDirection*(BALL_HALO)] = CHSV(213,255,255);
 
 }
 
@@ -190,6 +202,7 @@ MacIpPair macIpTable[] = {
   {"84:F3:EB:10:32:B6", IPAddress(192, 168, 0, 201)}, // Client 1
   // {"84:F3:EB:10:32:B6", IPAddress(192, 168, 3, 1)}, // The AP board
   {"50:02:91:EE:59:DC", IPAddress(192, 168, 0, 202)}, // Client 2
+  {"84:F3:EB:6C:31:70", IPAddress(192, 168, 0, 203)}
   // and so on...
 };
 const int numEntries = sizeof(macIpTable) / sizeof(macIpTable[0]);
@@ -277,6 +290,7 @@ void setup() {
   // makeTail(tailLength);
 
   // attach timer interrupts
+  // stripTicker.attach_ms(), updateStripISR);
   blinkTicker.attach_ms(FLASH_INTERVAL, toggleLedISR);
   cycleTicker.attach_ms(CYCLE_PERIOD, startBlinkCycleISR);
   setBlinkCode(2);      // 2 flashes
@@ -403,9 +417,6 @@ void setup() {
 int last_UDPheartbeat = 0;
 
 void handleUDP() {
-  
-
-
 
   // --- Receive UDP packets and parse them ---
   int packetSize = UDP.parsePacket();
@@ -436,9 +447,18 @@ void handleUDP() {
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay);
       break;
 
+      // Anything that needs to be done once at start or stop, do it here
       case 'S':
       runShow = value;
-      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Run Show:", runShow, "Position", ballPosition, "Direction", ballDirection);
+      if (runShow) {
+        sampleIndex = 0;
+        maxJitter = 0;
+        numPeriods = 0;
+        nextLEDupdate = micros()+stripDelay;
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection);
+      } else {
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Max Jitter", maxJitter, "Periods", numPeriods);
+      }
       break;
 
       case 'V':
@@ -481,7 +501,6 @@ void handleUDP() {
 
 }
 
-
 void loop() {
   
   handleUDP();              // Check for UDP packets and parse them
@@ -496,41 +515,70 @@ void loop() {
     //   WiFi.mode(WIFI_OFF);   // turn WiFi off to save power
     // }
 
-    // check if an LED update is needed
-    if (actualElapsed >= stripDelay) {
-      last_LEDupdate = micros();
+    // check if an LED update is needed using micros() timing
+    // if (actualElapsed >= stripDelay) {
+    //   last_LEDupdate = micros();
+
+    // check if an LED update is needed using micros() relative to epoch-based timing
+      int32_t stepDelta = (int32_t)(micros()-nextLEDupdate);
+      int     missedSteps = 0;
+
+      if ( stepDelta >= 0 ) {         // if we passed the nextLEDupdate time
+        nextLEDupdate += stripDelay;
+
+        if (numPeriods>1) {           // jitter tracking; ignore the first few spikes
+          maxJitter = max(maxJitter, abs(stepDelta));     // track the max jitter
+        }
+
+        while (micros()>nextLEDupdate) {
+          nextLEDupdate += stripDelay;
+          missedSteps += 1;
+        }
+    
+
+    // // check if an LED update is needed using ISR timing
+    // if (updateLEDs) {
 
       // measure jitter
-      int32_t jitter32 = (int32_t)actualElapsed - (int32_t)stripDelay;
-      int16_t jitter16 = constrain(jitter32, -32768, 32767);
-      jitter[sampleIndex++] = (int16_t)jitter16;
+      // int32_t jitter32 = (int32_t)actualElapsed - (int32_t)stripDelay;
+      // int16_t jitter16 = constrain(jitter32, -32768, 32767);
+      // jitter[sampleIndex++] = (int16_t)jitter16;
 
-      if (sampleIndex >= JITTER_SAMPLES) {
-        runShow = false;
-        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Jitter matrix full:", sampleIndex);
-      }
+      // if (sampleIndex >= JITTER_SAMPLES) {
+      //   runShow = false;
+      //   sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Jitter matrix full:", sampleIndex);
+      // }
 
-      // update ball position
-      ballPosition += ballDirection;
+      // if missedSteps >= 1 then we need to increment the ball by more than one position
+      // but we also have to take into account direction changes
 
-      // draw the ball
-      drawBall(ballPosition);
+      for (int i=missedSteps+1; i>0; i--) {
+        // update ball position
+        ballPosition += ballDirection;
 
-      // check limits and bounce if needed
-      if(ballPosition <= BALL_HALO || ballPosition >= BALL_HALO + NUM_LEDS - 1) {
-        ballDirection = -ballDirection;  // reverse direction
+        // check limits and bounce if needed
+        // sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(),ballPosition,ballDirection);
+        if (ballPosition <= BALL_HALO || ballPosition >= BALL_HALO + NUM_LEDS - 1) {
+          ballDirection = -ballDirection;  // reverse direction
 
-        if (ballDirection == -1) {          // if we're at 191 and just starting up again
-          numPeriods+=1;
-          measuredPeriod = micros() - lastPeriodStart;
-          lastPeriodStart = micros();
-          // sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), numPeriods, measuredPeriod);
+          if (ballDirection == -1) {          // if we're at 191 and just starting up again
+            numPeriods+=1;
+            // measuredPeriod = micros() - lastPeriodStart;
+            // lastPeriodStart = micros();
+            // sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), numPeriods, measuredPeriod);
+          }
         }
       }
       
+      // draw the ball
+      FastLED.clear();
+      drawBall(ballPosition);
+
       digitalWrite(DEBUG_PIN,HIGH);
       FastLED.show();
       digitalWrite(DEBUG_PIN,LOW);
+
+      // updateLEDs = false;
       
     }
   } else {    // if show not running

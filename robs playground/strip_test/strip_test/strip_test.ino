@@ -6,6 +6,8 @@
 #include <stdarg.h>
 #include <ArduinoOTA.h>
 #include <FastLED.h>
+#include "user_interface.h"
+
 
 // compile timestamp
 const char* versionCode = __DATE__ " " __TIME__;
@@ -13,28 +15,41 @@ const char* versionCode = __DATE__ " " __TIME__;
 
 // jitter storage stuff
 #define JITTER_SAMPLES 10000
-int16_t jitter[JITTER_SAMPLES];
+#define MIN_JITTER_STORE 500
+// int16_t jitter[JITTER_SAMPLES];
 uint16_t sampleIndex = 0;
+int32_t  maxJitter = 0;
+
+// crystal drift measurement stuff
+#define DRIFT_SAMPLES 5000   // 5000 samples @ 1Hz = 83.3 minutes so should include the rollover @ ~71.58min
+uint32_t drift[DRIFT_SAMPLES];
+int     lastDriftSave = 0;
+uint32_t measuredDrift = 0;
+uint32_t epochStart = 0;
 
 // LED strip definitions
 #define NUM_LEDS 192
 #define DATA_PIN D1
 #define DATA_PIN_SIDES D2
 #define DEBUG_PIN D7
-#define DEFAULT_STRIP_PERIOD 7   // in seconds
+#define DEFAULT_STRIP_PERIOD 7000000   // in microseconds
 #define FAST_LED_BLOCKING_TIME 14000 // in us
 
 // strip timing setup
 // Ticker stripTicker;
 // bool updateLEDs = false;
-unsigned int  stripDelay = DEFAULT_STRIP_PERIOD * 1000000 / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
+unsigned int  stripDelay = DEFAULT_STRIP_PERIOD / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
+unsigned int  stripPeriod = DEFAULT_STRIP_PERIOD;
 bool runShow = false;
 unsigned int  measuredPeriod = 0;
 unsigned int  numPeriods = 0;
-int32_t  maxJitter = 0;
 unsigned long last_LEDupdate = 0;
 unsigned long lastPeriodStart = 0;
 unsigned long nextLEDupdate = 0;
+unsigned int missedSteps = 0;
+unsigned int totalMissedSteps = 0;
+int32_t stepDelta = 0;
+
 
 // // Called every timestep
 // void updateStripISR() {
@@ -259,7 +274,16 @@ void sendUDPMessage(OSCMessage* msg_ptr, IPAddress receiver_IP, T first_msg, Arg
   sendUDPMessage(msg_ptr, receiver_IP, rest...);
 }
 
+void endShow() {
+  runShow = false;
+  sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Max Jitter", maxJitter, "Periods", numPeriods, "Missed Steps", totalMissedSteps);
+}
+
 void setup() {
+
+  // lock the CPU to 160MHz to ensure relative timing between D1s doesn't
+  // slip due to clock descaling on one of them
+  system_update_cpu_freq(160);
 
   // Serial debugging start
   Serial.begin(115200);
@@ -320,7 +344,7 @@ void setup() {
 
   // --- Connect to wifi ---
   WiFi.mode(WIFI_STA);
-  WiFi.setSleepMode(WIFI_MODEM_SLEEP);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.config(myIP, gatewayIP, subnetIP);
 
   Serial.print("Looking for AP \""); Serial.print(apSSID); Serial.println("\"...");
@@ -435,16 +459,26 @@ void handleUDP() {
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Flashes to", value);
       break;
 
+      case 'Z':
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Latest Show Stats: Max Jitter", maxJitter, "Periods", numPeriods, "Missed Steps", totalMissedSteps);
+      break;
+
       case 'J':
       for (int i=0;i<sampleIndex;i++) {
-        sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), jitter[i]);
+        // sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), jitter[i]);
       }
-      sampleIndex = 0;
+      break;
+
+      case 'C':
+      for (int i=0;i<sampleIndex;i++) {
+        sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), drift[i]);
+      }
       break;
 
       case 'P':
-      stripDelay = value * 1000000 / 2 / (NUM_LEDS-1);
-      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay);
+      stripPeriod = value;
+      stripDelay = stripPeriod / 2 / (NUM_LEDS-1);
+      sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay, "Period (us)", stripPeriod);
       break;
 
       // Anything that needs to be done once at start or stop, do it here
@@ -454,20 +488,25 @@ void handleUDP() {
         sampleIndex = 0;
         maxJitter = 0;
         numPeriods = 0;
+        missedSteps = 0;
+        totalMissedSteps = 0;
+        lastDriftSave = 0;
+        measuredDrift = 0;
+        epochStart = micros();
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection, "Period", stripPeriod);
         nextLEDupdate = micros()+stripDelay;
-        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection);
       } else {
-        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Max Jitter", maxJitter, "Periods", numPeriods);
+        endShow();
       }
       break;
 
       case 'V':
-      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Version Code:", versionCode);
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Version Code:", versionCode);
       break;
 
-      case 'T':
+      case 'D':
       stripDelay = value;
-      sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Strip Timestep:", stripDelay);
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Strip Timestep:", stripDelay);
       break;
 
       case 'L':
@@ -501,12 +540,16 @@ void handleUDP() {
 
 }
 
+
 void loop() {
   
   handleUDP();              // Check for UDP packets and parse them
 
-  uint32_t actualElapsed = micros() - last_LEDupdate;  // rollover-safe
+  // uint32_t actualElapsed = micros() - last_LEDupdate;  // rollover-safe
   
+
+
+
   if (runShow) {
 
     // // disconnect wifi
@@ -515,39 +558,56 @@ void loop() {
     //   WiFi.mode(WIFI_OFF);   // turn WiFi off to save power
     // }
 
-    // check if an LED update is needed using micros() timing
-    // if (actualElapsed >= stripDelay) {
-    //   last_LEDupdate = micros();
+       // record micros
+      if ((millis()-lastDriftSave)>1000) {    // every second for 5000 seconds
+        lastDriftSave = millis();
+        measuredDrift = (micros()-epochStart);
+        drift[sampleIndex++] = measuredDrift;
+      }
+
+      if (sampleIndex >= DRIFT_SAMPLES) {
+        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Drift matrix full:", sampleIndex);
+        endShow();
+      }
 
     // check if an LED update is needed using micros() relative to epoch-based timing
-      int32_t stepDelta = (int32_t)(micros()-nextLEDupdate);
-      int     missedSteps = 0;
+      stepDelta = (int32_t)(micros()-nextLEDupdate);
+      missedSteps = 0;
 
       if ( stepDelta >= 0 ) {         // if we passed the nextLEDupdate time
         nextLEDupdate += stripDelay;
 
-        if (numPeriods>1) {           // jitter tracking; ignore the first few spikes
-          maxJitter = max(maxJitter, abs(stepDelta));     // track the max jitter
-        }
-
+        // check if we need to do catchup because of long wifi blocking activity > stripDelay
         while (micros()>nextLEDupdate) {
           nextLEDupdate += stripDelay;
           missedSteps += 1;
         }
     
+        totalMissedSteps += missedSteps;
 
-    // // check if an LED update is needed using ISR timing
-    // if (updateLEDs) {
+        if (numPeriods>0) {           // jitter tracking; ignore the first few spikes
+          maxJitter = max(maxJitter, abs(stepDelta));     // track the max jitter
+        } else {  // some debugging stuff
+          // sendUDPMessage(&debugMsg, MAXhostIP, numPeriods, stepDelta, missedSteps, totalMissedSteps);
+        }
 
-      // measure jitter
-      // int32_t jitter32 = (int32_t)actualElapsed - (int32_t)stripDelay;
-      // int16_t jitter16 = constrain(jitter32, -32768, 32767);
-      // jitter[sampleIndex++] = (int16_t)jitter16;
+      // // measure jitter
+      // int16_t jitter16 = constrain(stepDelta, -32768, 32767);
+      // if (jitter16>=MIN_JITTER_STORE) {
+      //   jitter[sampleIndex++] = (int16_t)jitter16;
+      // }
+
+ 
+      // int16_t jitter16 = constrain(stepDelta, -32768, 32767);
+      // if (jitter16>=MIN_JITTER_STORE) {
+      //   jitter[sampleIndex++] = (int16_t)jitter16;
+      // }
 
       // if (sampleIndex >= JITTER_SAMPLES) {
-      //   runShow = false;
       //   sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Jitter matrix full:", sampleIndex);
+      //   endShow();
       // }
+
 
       // if missedSteps >= 1 then we need to increment the ball by more than one position
       // but we also have to take into account direction changes

@@ -139,7 +139,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 380.0, 120.0, 29.5, 22.0 ],
+					"patching_rect" : [ 390.0, 118.0, 29.5, 22.0 ],
 					"text" : "191"
 				}
 
@@ -152,7 +152,7 @@
 					"numinlets" : 0,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 342.0, 74.0, 72.0, 35.0 ],
+					"patching_rect" : [ 363.0, 48.0, 72.0, 35.0 ],
 					"text" : "receive numleds"
 				}
 
@@ -178,18 +178,6 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 430.0, 8.0, 424.0, 181.0 ],
 					"text" : "Compute and produce the timing signals from \nthe MSP sample-accurate clock.\n\nTr = rephase time (s)\nbase Tr signal is a ramp from 0 to 1 that resets every 1/Tr seconds\nTi = period of the ith pendulum (must be >= 7s)\nni = number of cycles the ith pendulum makes (must be integer)\n\nni * Ti = Tr\nni = n_i-1 + 1  (this pendulum does 1 more cycle in Tr than the last one did)\n\nn1 = number of cycles the slowest pendulum makes in Tr seconds\nn16 = number of cycles the fastest pendulum makes (i.e., n16 = 15+n1)"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-28",
-					"maxclass" : "message",
-					"numinlets" : 2,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 110.0, 413.0, 50.0, 22.0 ],
-					"text" : "bang"
 				}
 
 			}
@@ -530,7 +518,7 @@
  ]
 					}
 ,
-					"patching_rect" : [ 352.0, 330.0, 41.0, 22.0 ],
+					"patching_rect" : [ 264.0, 383.0, 41.0, 22.0 ],
 					"saved_object_attributes" : 					{
 						"description" : "",
 						"digest" : "",
@@ -909,7 +897,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 237.0, 161.0, 119.0, 22.0 ],
+					"patching_rect" : [ 237.0, 151.0, 119.0, 22.0 ],
 					"text" : "expr 1/($f2*2) * 1/$f1"
 				}
 
@@ -959,24 +947,7 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-132", 0 ],
-					"order" : 0,
-					"source" : [ "obj-16", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-22", 0 ],
-					"order" : 1,
-					"source" : [ "obj-16", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-28", 1 ],
-					"order" : 2,
 					"source" : [ "obj-16", 0 ]
 				}
 
@@ -1060,13 +1031,6 @@
 					"destination" : [ "obj-36", 0 ],
 					"order" : 0,
 					"source" : [ "obj-24", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-41", 0 ],
-					"source" : [ "obj-25", 0 ]
 				}
 
 			}

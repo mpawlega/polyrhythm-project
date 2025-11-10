@@ -1,3 +1,4 @@
+
 #include <ESP8266WiFi.h>
 #include <Ticker.h>
 #include <WiFiUdp.h>
@@ -7,6 +8,20 @@
 #include <ArduinoOTA.h>
 #include <FastLED.h>
 #include "user_interface.h"
+#include <ESP8266TimerInterrupt.h>
+
+// Debiug LED
+#define LED_PIN   LED_BUILTIN
+#define LED_OFF   HIGH
+#define LED_ON    LOW
+
+// Select a Timer Clock
+#define USING_TIM_DIV1                true           // for shortest and most accurate timer
+#define USING_TIM_DIV16               false          // for medium time and medium accurate timer
+#define USING_TIM_DIV256              false          // for longest timer but least accurate. Default
+
+// Init ESP8266 only and only Timer 1
+ESP8266Timer ITimer;
 
 
 // compile timestamp
@@ -35,9 +50,10 @@ uint32_t epochStart = 0;
 #define DEFAULT_STRIP_PERIOD 7000000   // in microseconds
 #define FAST_LED_BLOCKING_TIME 14000 // in us
 
+
 // strip timing setup
 // Ticker stripTicker;
-// bool updateLEDs = false;
+bool updateLEDs = false;
 unsigned int  stripDelay = DEFAULT_STRIP_PERIOD / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
 unsigned int  stripPeriod = DEFAULT_STRIP_PERIOD;
 bool runShow = false;
@@ -51,10 +67,10 @@ unsigned int totalMissedSteps = 0;
 int32_t stepDelta = 0;
 
 
-// // Called every timestep
-// void updateStripISR() {
-//   updateLEDs = true;
-// }
+// Called every timestep
+void IRAM_ATTR updateStripISR() {
+  updateLEDs = true;
+}
 
 // The "ball" is conceived as being in a 3x3 matrix, or a pixel with a 1-pixel BALL_HALO.
 // To avoid having to treat the end-points 
@@ -74,6 +90,7 @@ int tailLength = 0;
 int ballPosition = BALL_HALO+NUM_LEDS-1;      // starts at the bottom of the strip
 int ballDirection = -1;
 int ballHue = DEFAULT_BALL_HUE;
+bool flashGradient = true;
 
 // create the RGB led struct arrays with BALL_HALO elements on ends to help with bouncing
 // valid array indices go from 0 to NUM_LEDS+2*BALL_HALO-1
@@ -96,7 +113,7 @@ CRGB ledsSides[NUM_LEDS+2*BALL_HALO];
 //                       136, 119, 102,  85,  68,  51,  38, 24};
 
 // Status LED blinking interrupt stuff
-const int LED_PIN = LED_BUILTIN;   // Active-LOW on Wemos D1 mini/lite
+
 Ticker blinkTicker;
 Ticker cycleTicker;
 
@@ -112,24 +129,24 @@ const float CYCLE_PERIOD = 2000;    // milli-seconds total per code cycle
 void toggleLedISR() {
   // If code is 0 → LED off
   if (blinkCode == 0) {
-    digitalWrite(LED_PIN, HIGH); // off (active-low)
+    digitalWrite(LED_PIN, LED_OFF); // off (active-low)
     return;
   }
 
   // If code is 20 → LED on solid
   if (blinkCode == 20) {
-    digitalWrite(LED_PIN, LOW);  // on (active-low)
+    digitalWrite(LED_PIN, LED_ON);  // on (active-low)
     return;
   }
 
   // Otherwise, blink "blinkCode" times at 10 Hz, then stay off for rest of 2s
   if (currentFlash < blinkCode * 2) { // each flash = on + off
     ledState = !ledState;
-    digitalWrite(LED_PIN, ledState ? LOW : HIGH);
+    digitalWrite(LED_PIN, ledState ? LED_ON : LED_OFF);
     currentFlash++;
   } else {
     // End of flashing sequence → LED off, wait until next cycle
-    digitalWrite(LED_PIN, HIGH);
+    digitalWrite(LED_PIN, LED_OFF);
   }
 }
 
@@ -214,10 +231,24 @@ struct MacIpPair {
 };
 
 MacIpPair macIpTable[] = {
-  {"84:F3:EB:10:32:B6", IPAddress(192, 168, 0, 201)}, // Client 1
-  // {"84:F3:EB:10:32:B6", IPAddress(192, 168, 3, 1)}, // The AP board
-  {"50:02:91:EE:59:DC", IPAddress(192, 168, 0, 202)}, // Client 2
-  {"84:F3:EB:6C:31:70", IPAddress(192, 168, 0, 203)}
+  {"84:F3:EB:10:32:B6", IPAddress(192, 168, 0, 201)}, 
+  {"8C:AA:B5:08:DF:0C", IPAddress(192, 168, 0, 202)}, 
+  {"84:F3:EB:6C:31:70", IPAddress(192, 168, 0, 203)},
+  {"40:22:D8:8E:A2:C4", IPAddress(192, 168, 0, 204)},
+  {"EC:FA:BC:CD:F3:48", IPAddress(192, 168, 0, 205)},
+  {"84:F3:EB:10:30:C3", IPAddress(192, 168, 0, 206)},
+  {"84:F3:EB:AC:DD:BA", IPAddress(192, 168, 0, 207)},
+  {"50:02:91:EE:59:DC", IPAddress(192, 168, 0, 208)},
+  {"08:F9:E0:5C:F3:81", IPAddress(192, 168, 0, 209)}
+  
+
+
+  
+
+
+
+
+
   // and so on...
 };
 const int numEntries = sizeof(macIpTable) / sizeof(macIpTable[0]);
@@ -285,13 +316,14 @@ void setup() {
   // slip due to clock descaling on one of them
   system_update_cpu_freq(160);
 
+
   // Serial debugging start
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   pinMode(DEBUG_PIN, OUTPUT);
   pinMode(DATA_PIN, OUTPUT);
   pinMode(DATA_PIN_SIDES, OUTPUT);
-  digitalWrite(LED_PIN, HIGH); // off
+  digitalWrite(LED_PIN, LED_ON);
   digitalWrite(DATA_PIN, LOW); // off
   digitalWrite(DATA_PIN_SIDES, LOW); // off
   
@@ -315,8 +347,18 @@ void setup() {
 
   // attach timer interrupts
   // stripTicker.attach_ms(), updateStripISR);
-  blinkTicker.attach_ms(FLASH_INTERVAL, toggleLedISR);
-  cycleTicker.attach_ms(CYCLE_PERIOD, startBlinkCycleISR);
+  // blinkTicker.attach_ms(FLASH_INTERVAL, toggleLedISR);
+  // cycleTicker.attach_ms(CYCLE_PERIOD, startBlinkCycleISR);
+    // Interval in microsecs
+  ITimer.attachInterruptInterval(stripDelay, updateStripISR);
+  // {
+  //   lastMillis = millis();
+  //   Serial.print(F("Starting ITimer OK, millis() = "));
+  //   Serial.println(lastMillis);
+  // }
+  // else
+  //   Serial.println(F("Can't set ITimer correctly. Select another freq. or interval"));
+    
   setBlinkCode(2);      // 2 flashes
 
   Serial.print("Set strip period to (s) ");
@@ -435,6 +477,8 @@ void setup() {
   sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Timestep:", stripDelay, "(us)");
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Finished setup.  Version code", versionCode);
 
+  digitalWrite(LED_PIN, LED_OFF);
+
   
 }
 
@@ -469,6 +513,10 @@ void handleUDP() {
       }
       break;
 
+      case 'G':
+        flashGradient = !flashGradient;
+      break;
+
       case 'C':
       for (int i=0;i<sampleIndex;i++) {
         sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), drift[i]);
@@ -478,6 +526,7 @@ void handleUDP() {
       case 'P':
       stripPeriod = value;
       stripDelay = stripPeriod / 2 / (NUM_LEDS-1);
+      ITimer.setInterval(stripDelay, updateStripISR);
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay, "Period (us)", stripPeriod);
       break;
 
@@ -552,7 +601,7 @@ void loop() {
 
   if (runShow) {
 
-    // // disconnect wifi
+    // // // disconnect wifi
     // if (WiFi.status() == WL_CONNECTED) {
     //   WiFi.disconnect(true);  // disconnect and erase saved credentials
     //   WiFi.mode(WIFI_OFF);   // turn WiFi off to save power
@@ -574,7 +623,10 @@ void loop() {
       stepDelta = (int32_t)(micros()-nextLEDupdate);
       missedSteps = 0;
 
-      if ( stepDelta >= 0 ) {         // if we passed the nextLEDupdate time
+      // if ( stepDelta >= 0 ) {         // if we passed the nextLEDupdate time
+      if (updateLEDs) {
+
+        FastLED.clear();
         nextLEDupdate += stripDelay;
 
         // check if we need to do catchup because of long wifi blocking activity > stripDelay
@@ -618,40 +670,48 @@ void loop() {
 
         // check limits and bounce if needed
         // sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(),ballPosition,ballDirection);
-        if (ballPosition <= BALL_HALO || ballPosition >= BALL_HALO + NUM_LEDS - 1) {
+        if (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
+          constrain(ballDirection,BALL_HALO,NUM_LEDS-1+BALL_HALO);
           ballDirection = -ballDirection;  // reverse direction
 
           if (ballDirection == -1) {          // if we're at 191 and just starting up again
+            // fill_gradient_RGB(&leds[BALL_HALO], 0, CRGB(0,0,0), NUM_LEDS-1, CRGB(255,255,255), LINEARBLEND);
+            if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
+
             numPeriods+=1;
             // measuredPeriod = micros() - lastPeriodStart;
             // lastPeriodStart = micros();
             // sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), numPeriods, measuredPeriod);
+          } else { // if we're at 0 and starting down
+            if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), NUM_LEDS-1, CHSV(0,0,0));}
+
+            // fill_gradient_RGB(&leds[BALL_HALO], 0, CRGB(255,255,255), NUM_LEDS-1, CRGB(0,0,0), LINEARBLEND);
           }
         }
       }
       
       // draw the ball
-      FastLED.clear();
+
       drawBall(ballPosition);
 
       digitalWrite(DEBUG_PIN,HIGH);
       FastLED.show();
       digitalWrite(DEBUG_PIN,LOW);
 
-      // updateLEDs = false;
+      updateLEDs = false;
       
     }
   } else {    // if show not running
     
-    // if (WiFi.status() != WL_CONNECTED) {
-    //   // To enable WiFi again:
-    //   WiFi.mode(WIFI_STA);   // station mode
-    //   WiFi.begin(apSSID, apPassword);  // reconnect with your credentials
+    if (WiFi.status() != WL_CONNECTED) {
+      // To enable WiFi again:
+      WiFi.mode(WIFI_STA);   // station mode
+      WiFi.begin(apSSID, apPassword);  // reconnect with your credentials
       
-    //   while (WiFi.status() != WL_CONNECTED) {
-    //     delay(500);
-    //   }
-    // }
+      while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+      }
+    }
 
     // Check for OTA; don't need to do this if show is running
     ArduinoOTA.handle();      // check for OTA programming flag
@@ -660,6 +720,9 @@ void loop() {
     if ((millis()-last_UDPheartbeat) > 5000) {
       last_UDPheartbeat = millis();
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "UDP Heartbeat");
+      digitalWrite(LED_PIN, LED_ON);
+      delay(500);
+      digitalWrite(LED_PIN, LED_OFF);
     }
 
   }

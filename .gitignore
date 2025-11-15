@@ -1,3 +1,4 @@
 # Ignore macOS metadata
 .DS_Store
 
+/robs playground/strip_test/strip_test/build

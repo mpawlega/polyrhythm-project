@@ -262,7 +262,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 0,
 					"patching_rect" : [ 77.0, 240.5, 150.0, 33.0 ],
-					"text" : "Calculate the timestep in us and send to the shaft"
+					"text" : "Calculate the strip period in us and send to the strip"
 				}
 
 			}

@@ -1,3 +1,4 @@
+// --- Begin adapted sketch: original comments preserved, diagnostic additions marked [DIAG] ---
 
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
@@ -7,31 +8,23 @@
 #include <ArduinoOTA.h>
 #include <FastLED.h>
 #include "user_interface.h"
-#include <ESP8266TimerInterrupt.h>
 
 // Debug LED
 #define LED_PIN   LED_BUILTIN
 #define LED_OFF   HIGH
 #define LED_ON    LOW
 
-// Select a Timer Clock
-#define USING_TIM_DIV1                true           // for shortest and most accurate timer
-#define USING_TIM_DIV16               false          // for medium time and medium accurate timer
-#define USING_TIM_DIV256              false          // for longest timer but least accurate. Default
-
-// Init ESP8266 only and only Timer 1
-ESP8266Timer ITimer;
-
 // compile timestamp
 const char* versionCode = __DATE__ " " __TIME__;
 #pragma message "\nBuilding at: " __DATE__ " " __TIME__
 
-// jitter & drift storage stuff
-#define DRIFT_SAMPLES 5000   // 5000 samples @ 1Hz = 83.3 minutes so should include the rollover @ ~71.58min
+// sampling timing stuff
+#define DRIFT_SAMPLES 3600   // 3600 samples @ 1Hz = 1 hour (use uint64 timestamps)
+#define SAMPLE_INTERVAL_US 4000000ULL  // in us; the ULL suffix specifies 64-bit (unsigned long long)
+uint64_t samples64[DRIFT_SAMPLES];
+// uint64_t nextSampleTime64 = 0;
 uint16_t sampleIndex = 0;
-uint32_t drift[DRIFT_SAMPLES];
-int      lastDriftSave = 0;
-uint32_t measuredDrift = 0;
+bool     sampleTiming = false;
 
 // LED strip definitions
 #define NUM_LEDS 192
@@ -39,27 +32,20 @@ uint32_t measuredDrift = 0;
 #define DATA_PIN_SIDES D2
 #define DEBUG_PIN D7
 #define DEFAULT_STRIP_PERIOD 7000000   // in microseconds
-#define FAST_LED_BLOCKING_TIME 14000 // in us, measured on a 'scope and rounded up
 
-// strip timing setup
-uint32_t epochStart = 0;
-bool updateLEDs = false;
-unsigned int  stripDelay = DEFAULT_STRIP_PERIOD / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
-unsigned int  stripPeriod = DEFAULT_STRIP_PERIOD;
-bool runShow = false;
-unsigned int  measuredPeriod = 0;
-unsigned int  numPeriods = 0;
-unsigned long last_LEDupdate = 0;
-unsigned long lastPeriodStart = 0;
-unsigned long nextLEDupdate = 0;
-unsigned int missedSteps = 0;
-unsigned int totalMissedSteps = 0;
-int32_t stepDelta = 0;
-
-// LED update ISR
-void IRAM_ATTR updateStripISR() {
-  updateLEDs = true;
-}
+// strip timing stuff
+uint64_t epochStart64  = 0;
+uint64_t nextLEDupdate64 = 0;
+uint32_t frameIndex = 0;      // this allows > 11 Million periods of 382 LEDs so 32 bits is fine
+uint32_t stripDelay = DEFAULT_STRIP_PERIOD / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
+uint32_t stripPeriod = DEFAULT_STRIP_PERIOD;
+uint32_t numPeriods = 0;
+uint32_t missedFrames = 0;
+uint32_t totalMissedFrames = 0;
+bool     runShow = false;
+bool     sendHeartbeat = true;
+// int32_t stepDelta = 0;
+// unsigned long nextLEDupdate = 0;
 
 // The "ball" is conceived as being in a 3x3 matrix, or a pixel with a 1-pixel BALL_HALO.
 // To avoid having to treat the end-points 
@@ -74,10 +60,12 @@ void IRAM_ATTR updateStripISR() {
 // ball parameters
 #define BALL_HALO 1
 #define DEFAULT_BALL_HUE 213
-int ballPosition = BALL_HALO+NUM_LEDS-1;      // starts at the bottom of the strip
-int ballDirection = -1;
-int ballHue = DEFAULT_BALL_HUE;
-bool flashGradient = true;
+#define START_BALL_POSITION BALL_HALO+NUM_LEDS-1  // starts at the bottom of the strip
+#define START_BALL_DIRECTION -1                   // starts heading up the strip towards index 0
+int     ballDirection = START_BALL_DIRECTION;
+uint8_t ballPosition = START_BALL_POSITION;      
+uint8_t ballHue = DEFAULT_BALL_HUE;
+bool    flashGradient = true;
 
 // create the RGB led struct arrays with BALL_HALO elements on ends to help with bouncing
 // valid array indices go from 0 to NUM_LEDS+2*BALL_HALO-1
@@ -89,7 +77,7 @@ void drawBall(int pos) {
 
   // if somehow we get passed a value that is outside the range
   // constrain it to avoid array indexing over- or underflow
-  constrain(pos,BALL_HALO,BALL_HALO+NUM_LEDS-1);
+  pos = constrain(pos,BALL_HALO,BALL_HALO+NUM_LEDS-1);
 
   for (int led=pos+BALL_HALO; led>=pos-BALL_HALO; led--) {
     leds[led] = CHSV(213,255,255);
@@ -139,13 +127,16 @@ bool isConnected = false;
 WiFiUDP UDP;
 unsigned int listenPort = 8888;
 unsigned int sendPort = 8887;
+unsigned int debugPort = 8890;    // for python listeners; MAX uses OSC flags to filter debug messages
 char incomingPacket[255];
+char msg[128];
 int last_UDPheartbeat = 0;
 
 // initialize OSC message addresses/headers
 OSCMessage debugMsg("/debug");
 OSCMessage statusMsg("/status");
 OSCMessage dataMsg("/data");
+OSCMessage binaryMsg("/binary");    // in case I implement receiving binary data packets on MAX vs. using data.py
 
 template<typename T>
 void sendUDPMessage(OSCMessage* msg_ptr, IPAddress receiver_IP, T first_msg) {
@@ -174,10 +165,122 @@ void sendUDPMessage(OSCMessage* msg_ptr, IPAddress receiver_IP, T first_msg, Arg
   sendUDPMessage(msg_ptr, receiver_IP, rest...);
 }
 
+void sendDebugUDP(const char* msg) {
+  UDP.beginPacket(MAXhostIP, debugPort);
+  UDP.write((const uint8_t*)msg, strlen(msg));
+  UDP.endPacket();
+}
+
+// make this eventually to gather things that need to initialize
+void startShow() {
+  runShow = true;
+  sendHeartbeat = false;
+  sampleIndex = 0;
+  numPeriods = 0;
+  frameIndex = 0;
+  missedFrames = 0;
+  totalMissedFrames = 0;
+  epochStart64 = micros64();
+  nextLEDupdate64 = epochStart64 + (uint64_t)stripDelay;
+  sampleIndex = 0;
+  sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection, "Period", stripPeriod);
+}
+
 void endShow() {
   runShow = false;
-  sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Periods", numPeriods, "Missed Steps", totalMissedSteps);
+  // FastLED.clear();
+  // FastLED.show();
+  // ballPosition = START_BALL_POSITION;
+  // ballDirection = START_BALL_DIRECTION;
+  sendHeartbeat = true;
+  sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Periods", numPeriods, "Missed Steps", totalMissedFrames);
 }
+
+// ------------------- [DIAG] helpers and UDP binary export -------------------
+// [DIAG] write big-endian helpers for binary UDP packet construction
+inline void write_u32_be(uint8_t *buf, uint32_t v) {
+  buf[0] = (v >> 24) & 0xFF;
+  buf[1] = (v >> 16) & 0xFF;
+  buf[2] = (v >> 8) & 0xFF;
+  buf[3] = (v) & 0xFF;
+}
+inline void write_u16_be(uint8_t *buf, uint16_t v) {
+  buf[0] = (v >> 8) & 0xFF;
+  buf[1] = (v) & 0xFF;
+}
+inline void write_u64_be(uint8_t *buf, uint64_t v) {
+  buf[0] = (v >> 56) & 0xFF;
+  buf[1] = (v >> 48) & 0xFF;
+  buf[2] = (v >> 40) & 0xFF;
+  buf[3] = (v >> 32) & 0xFF;
+  buf[4] = (v >> 24) & 0xFF;
+  buf[5] = (v >> 16) & 0xFF;
+  buf[6] = (v >> 8) & 0xFF;
+  buf[7] = (v) & 0xFF;
+}
+
+// [DIAG] Packet format:
+// [4 bytes start_index BE][2 bytes count BE][count * 8 bytes timestamps BE]
+void sendSamplesUDP(uint32_t start_idx, uint16_t count) {
+  if (start_idx >= sampleIndex) return; // nothing to send
+  if (start_idx + count > sampleIndex) count = sampleIndex - start_idx;
+
+
+  // compute packet size and create buffer
+  uint16_t header = 6;
+  uint32_t payload_bytes = (uint32_t)count * 8;
+  uint32_t pkt_size = header + payload_bytes;
+
+  // snprintf(msg, sizeof(msg), "/download [%s] Constructing packet with %u bytes", myIPstring.c_str(), payload_bytes);
+  // sendDebugUDP(msg);
+
+  // Guard: if packet > 1400, reduce count (shouldn't happen if chunk size is tuned)
+  if (pkt_size > 1400) {
+    uint16_t newcount = (1400 - header) / 8;
+    if (newcount == 0) return;
+    count = newcount;
+    payload_bytes = (uint32_t)count * 8;
+    pkt_size = header + payload_bytes;
+  }
+
+  uint8_t *buf = (uint8_t*) malloc(pkt_size);
+  if (!buf) return;
+
+  // header: start_idx (4B BE) + count (2B BE)
+  write_u32_be(buf, start_idx);
+  write_u16_be(buf + 4, count);
+
+  // snprintf(msg, sizeof(msg), "/download [%s] Writing packet to buffer", myIPstring.c_str());
+  // sendDebugUDP(msg);
+
+  // copy samples (big-endian)
+  for (uint16_t i = 0; i < count; ++i) {
+    uint64_t v = samples64[start_idx + i];
+    write_u64_be(buf + header + (i * 8), v);
+  }
+
+  // snprintf(msg, sizeof(msg), "/download [%s] Sending Packet with size %u", myIPstring.c_str(), pkt_size);
+  // sendDebugUDP(msg);
+
+  // send raw UDP packet to MAXhostIP:sendPort
+  UDP.beginPacket(MAXhostIP, sendPort);
+  UDP.write(buf, pkt_size);
+  UDP.endPacket();
+
+  free(buf);
+}
+
+// [DIAG] send all recorded samples in chunks (caller can use 'A' to request)
+#define UDP_SAMPLE_CHUNK 64
+void sendAllSamplesInChunks() {
+  uint32_t idx = 0;
+  while (idx < sampleIndex) {
+    sendSamplesUDP(idx, UDP_SAMPLE_CHUNK);
+    idx += UDP_SAMPLE_CHUNK;
+    delay(20); // small breathing room for the network stack
+  }
+}
+// ---------------------------------------------------------------------------
 
 void setup() {
 
@@ -208,9 +311,6 @@ void setup() {
   FastLED.addLeds<WS2812, DATA_PIN_SIDES>(&ledsSides[BALL_HALO], NUM_LEDS);
   FastLED.clear();
   FastLED.show();
-
-  // attach timer interrupts
-  ITimer.attachInterruptInterval(stripDelay, updateStripISR);
   
   // get MAC address
   String mac = WiFi.macAddress();
@@ -278,7 +378,6 @@ void setup() {
     Serial.println("Failed to connect to AP after several attempts.");
   }
 
-  
   // Set up Arduino OTA
   delay(500); // give the TCP stack a moment to settle
   Serial.println("Starting OTA...");
@@ -305,6 +404,10 @@ void handleUDP() {
 
   int packetSize = UDP.parsePacket();
 
+  // Note: this UDP handler is very fragile and relies on only ever receiving well-formed packets.
+  // In a controlled environment with little data packet corruption it's probably fine.
+  // At a minimum, unrecognized packets are responded to with a ??? message.
+  // But also UDP drops packets and doesn't guarantee sequencing, so it's fragile by nature.
   if (packetSize) {
     int len = UDP.read(incomingPacket, 255);
     if (len > 0) incomingPacket[len] = 0;
@@ -312,46 +415,33 @@ void handleUDP() {
 
     switch (incomingPacket[0]) {
 
+      // send latest run stats
       case 'Z':
-        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Latest Show Stats: Periods", numPeriods, "Missed Steps", totalMissedSteps);
-      break;
-
-      case 'J':
-      for (int i=0;i<sampleIndex;i++) {
-        // sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), jitter[i]);
-      }
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Latest Show Stats: Periods", numPeriods, "Missed Steps", totalMissedFrames);
       break;
 
       case 'G':
         flashGradient = !flashGradient;
       break;
 
-      case 'C':
-        for (int i=0;i<sampleIndex;i++) {
-          sendUDPMessage(&dataMsg, MAXhostIP, myIPstring.c_str(), drift[i]);
-        }
+      case 'H':
+        sendHeartbeat = !sendHeartbeat;
       break;
 
+      // stripPeriod and stripDelay are uint32_t
       case 'P':
         stripPeriod = value;
+        if (stripPeriod==0) {
+          sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Got bad period:", stripPeriod);
+          break;
+        }
         stripDelay = stripPeriod / 2 / (NUM_LEDS-1);
-        ITimer.setInterval(stripDelay, updateStripISR);
         sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay, "Period (us)", stripPeriod);
       break;
 
-      // Anything that needs to be done once at start or stop, do it here
       case 'S':
-        runShow = value;
-        if (runShow) {
-          sampleIndex = 0;
-          numPeriods = 0;
-          missedSteps = 0;
-          totalMissedSteps = 0;
-          lastDriftSave = micros(); //0;
-          measuredDrift = 0;
-          epochStart = micros();
-          sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection, "Period", stripPeriod);
-          nextLEDupdate = micros()+stripDelay;
+        if (value) {
+          startShow();
         } else {
           endShow();
         }
@@ -379,7 +469,52 @@ void handleUDP() {
         // then we can come back and make an exception
         ballDirection = (ballPosition == BALL_HALO+NUM_LEDS-1) ? -1 : 1;
         FastLED.clear();
-        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting Position:", ballPosition);
+        drawBall(ballPosition);
+        FastLED.show();
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Set Position:", ballPosition);
+      break;
+
+      // ---------- [DIAG] measurement and export commands ----------
+      // 'T' <1=start measurement, 0=stop measurement>
+      case 'T':
+        if (value != 0) {
+          // start timestamp sampling and reset sampling array
+          sampleTiming = true;
+          sampleIndex = 0;
+          // turn on sampling mode by scheduling the first sample and incrementing sampleIndex past 0
+          uint64_t t0 = micros64();
+          samples64[0] = t0; // sample index 0 stored immediately at start (optional)
+          sampleIndex = 1;
+          // schedule next sample after interval
+          // nextSampleTime64 stored in microseconds monotonic
+          // uint64_t nextSampleTime64 = t0 + SAMPLE_INTERVAL_US; // 1 Hz => 1,000,000 us; defined as ULL
+          // store scheduling into a static-like variable by writing to a global-like named var
+          // Because original code didn't have a nextSampleTime64 variable, we create a static here:
+          // we will use the global variable 'nextLEDupdate' temporarily to hold nextSampleTime64 during measurement
+          // nextLEDupdate = (unsigned long)(nextSampleTime64 & 0xFFFFFFFFUL); // low 32 bits used only for scheduling
+          // send notification
+          sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Measurement STARTED. Samples:", DRIFT_SAMPLES, "Interval (us)", (uint32_t)SAMPLE_INTERVAL_US);
+        } else {
+          // stop measurement
+          sampleTiming = false;
+          sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Measurement STOPPED. Recorded:", sampleIndex);
+        }
+      break;
+
+      // 'R' <start_index> — send up to UDP_SAMPLE_CHUNK samples starting at start_index as binary UDP packet
+      case 'R':
+      {
+        uint32_t start_idx = (uint32_t) value;
+        // snprintf(msg, sizeof(msg), "/download [%s] Requesting chunk at index %u", myIPstring.c_str(), start_idx);
+        // sendDebugUDP(msg);
+        // [DIAG] compute count using chunk defined above
+        sendSamplesUDP(start_idx, UDP_SAMPLE_CHUNK);
+      }
+      break;
+
+      // 'A' — send all samples in chunks (binary)
+      case 'A':
+        sendAllSamplesInChunks();
       break;
 
       default:
@@ -394,6 +529,29 @@ void loop() {
   
   handleUDP();              // Check for UDP packets and parse them
 
+  // regardless of whether the show is running or not, if we're sampling the clock do it here
+  // note: to start sampling, the UDP handler T1 code sets sampleIndex = 1 to enter this loop
+  if (sampleTiming && (sampleIndex > 0 && sampleIndex < DRIFT_SAMPLES)) {
+    uint64_t now = micros64();
+    // uint64_t nextSampleTime64 = ((uint64_t)nextLEDupdate) & 0xFFFFFFFFULL;
+    // // If the reconstructed nextSampleTime64 is less than now's low 32 bits, adjust by adding 2^32 until > now-1s
+    // // Simpler: use a rolling schedule based on the first sample saved in samples64[0]
+    uint64_t scheduledSample64 = samples64[0] + (uint64_t)(sampleIndex) * SAMPLE_INTERVAL_US;
+    if (now >= scheduledSample64) {
+      // record sample
+      samples64[sampleIndex++] = now;
+      // if buffer full, send notification (host can request data)
+      if (sampleIndex >= DRIFT_SAMPLES) {
+        // buffer full: notify host
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Measurement BUFFER FULL", "Samples", sampleIndex);
+      }
+      // small yield to avoid blocking UDP
+      yield();
+    }
+    // while measuring we avoid heavy blocking actions; we still let UDP run above
+    // if (sampleIndex > 0 && sampleIndex < DRIFT_SAMPLES) return;
+  }
+
   if (runShow) {
 
     // // disconnect wifi if needed
@@ -402,65 +560,42 @@ void loop() {
     //   WiFi.mode(WIFI_OFF);   // turn WiFi off to save power
     // }
 
-    // every 1000ms, record micros since epochstart to assess clock drift over time
-    // if ((millis()-lastDriftSave)>1000) {    // every second for 5000 seconds
-    //   lastDriftSave = millis();
-    //   measuredDrift = (micros()-epochStart);
-    //   drift[sampleIndex++] = measuredDrift;
-    // }
-    //
-    // if (sampleIndex >= DRIFT_SAMPLES) {
-    //   sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Drift matrix full:", sampleIndex);
-    //   endShow();
-    // }
+    // Use monotonic 64-bit time for scheduling math
+    uint64_t now = micros64();
 
-    // calculate the delta past the next LED update step (which is incremented from epochStart)
-    stepDelta = (int32_t)(micros()-nextLEDupdate);
-    missedSteps = 0;
+    // // calculate the delta past the next LED update step (which is incremented from epochStart)
+    // stepDelta = (int32_t)(micros()-nextLEDupdate);
+    // missedFrames = 0;
 
-    // check if we need to update the LEDs (one check using polling, one using ISR)
-    if ( stepDelta >= 0 ) {         // if we passed the nextLEDupdate time
-    // if (updateLEDs) {                  // if ISR has triggered flag set
+    // If we've passed the update time, do the update
+    if (now >= nextLEDupdate64) {
 
-      // clear them first (this doesn't display until FastLED.show() is called)
+      // compute how many frames we might have missed using integer division
+      uint64_t delta64 = now - nextLEDupdate64;
+      missedFrames = (uint32_t)(delta64 / (uint64_t)stripDelay);
+   
+      // Update frameIndex and compute the *new* nextLEDupdate64 strictly from epoch,
+      // which prevents accumulation of rounding errors that would occur if we just += stripDelay repeatedly.
+      // We advance by missedFrames + 1 to include the current frame.
+      frameIndex += (uint32_t)(missedFrames + 1U);
+      nextLEDupdate64 = epochStart64 + ((uint64_t)frameIndex * (uint64_t)stripDelay);
+
+      // increment the total missed frames stat
+      totalMissedFrames += missedFrames;
+
+       // clear the strips first (this doesn't display until FastLED.show() is called)
       FastLED.clear();
 
-      // increment the epoch-based counter by the fixed timestep
-      // note: nextLEDupdate is incremented from epochStart by stripDelay each time the strips are updated,
-      // meaning that jitter in arriving to this point is absorbed as long as it isn't longer than the blocking
-      // calls for FastLED.show() and other background blocking tasks (wifi, etc)
-      nextLEDupdate += stripDelay;
-
-      // use this drift measurement if we want to compare to the stripDelay at each cycle, instead of over a longer
-      // time (see above for measurement since epochStart every 1000ms)      
-      // measuredDrift = micros()-lastDriftSave;
-      // lastDriftSave = micros();
-      // drift[sampleIndex++] = measuredDrift;
-      //
-      // if (sampleIndex >= DRIFT_SAMPLES) {
-      //   sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Drift matrix full:", sampleIndex);
-      //   endShow();
-      // }
-
-      // check if we've actually missed >0 LED update steps; if this happens it's likely because of blocking activity 
-      // from Wifi, or stripDelay being smaller than the FAST_LED_BLOCKING_TIME. It will result in some jumping, but 
-      // at speeds that fast, it's not so visible so it's a good solution!
-      while (micros()>nextLEDupdate) {    // essentially: are we already passed the NEW nextLEDupdate time?
-        nextLEDupdate += stripDelay;
-        missedSteps += 1;
-      }
-      totalMissedSteps += missedSteps;
-
-      // if missedSteps >= 1 then we need to increment the ball by more than one position
-      // but we also have to take into account direction changes
-      for (int i=missedSteps+1; i>0; i--) {
+      // if missedFrames >= 1 then we need to increment the ball by more than one position
+      // but we also have to take into account direction changes, so go one step at a time
+      for (int i=missedFrames+1; i>0; i--) {
         
         // update ball position
         ballPosition += ballDirection;
 
         // check limits and bounce if needed
         if (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
-          constrain(ballDirection,BALL_HALO,NUM_LEDS-1+BALL_HALO);
+          ballPosition = constrain(ballPosition,BALL_HALO,NUM_LEDS-1+BALL_HALO);
           ballDirection = -ballDirection;  // reverse direction
 
           if (ballDirection == -1) {          // if we're at 191 and just starting up again
@@ -499,11 +634,17 @@ void loop() {
     // Check for OTA; don't need to do this if show is running
     ArduinoOTA.handle();      // check for OTA programming flag
 
+    // // Clear the strips
+    // FastLED.clear();
+    // FastLED.show();
+
     // Send UDP heartbeat -- NOTE THIS CAUSES STUTTER IN THE DISPLAY SO DON'T CALL DURING SHOW
     // (i.e., don't put it directly in the UDP handler routine, which is called during the show)
-    if ((millis()-last_UDPheartbeat) > 5000) {
+    if (sendHeartbeat && ((millis()-last_UDPheartbeat) > 5000)) {
       last_UDPheartbeat = millis();
       sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "UDP Heartbeat");
+      snprintf(msg, sizeof(msg), "/download [%s] Heartbeat", myIPstring.c_str());
+      sendDebugUDP(msg);
       digitalWrite(LED_PIN, LED_ON);
       delay(500);
       digitalWrite(LED_PIN, LED_OFF);
@@ -511,4 +652,4 @@ void loop() {
 
   }
 
-}
+} // end loop

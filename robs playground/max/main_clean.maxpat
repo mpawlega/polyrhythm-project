@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 37.0, 112.0, 1152.0, 832.0 ],
+		"rect" : [ 37.0, 112.0, 682.0, 832.0 ],
 		"bglocked" : 0,
 		"openinpresentation" : 0,
 		"default_fontsize" : 12.0,
@@ -39,6 +39,18 @@
 		"subpatcher_template" : "",
 		"assistshowspatchername" : 0,
 		"boxes" : [ 			{
+				"box" : 				{
+					"id" : "obj-24",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 406.0, 607.0, 226.0, 22.0 ],
+					"text" : "patcher:/../../Audio/unsilent_night.maxpat"
+				}
+
+			}
+, 			{
 				"box" : 				{
 					"id" : "obj-22",
 					"maxclass" : "button",
@@ -2824,18 +2836,6 @@
 			}
 , 			{
 				"box" : 				{
-					"id" : "obj-17",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 515.0, 577.0, 83.0, 22.0 ],
-					"text" : "unsilent_night"
-				}
-
-			}
-, 			{
-				"box" : 				{
 					"id" : "obj-121",
 					"maxclass" : "multislider",
 					"numinlets" : 1,
@@ -3072,7 +3072,6 @@
 						"style" : "",
 						"subpatcher_template" : "",
 						"assistshowspatchername" : 0,
-						"visible" : 1,
 						"boxes" : [ 							{
 								"box" : 								{
 									"id" : "obj-38",
@@ -4815,13 +4814,6 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-173", 0 ],
-					"source" : [ "obj-17", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-189", 1 ],
 					"source" : [ "obj-178", 0 ]
 				}
@@ -4906,8 +4898,15 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-17", 0 ],
+					"destination" : [ "obj-24", 0 ],
 					"source" : [ "obj-22", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-173", 0 ],
+					"source" : [ "obj-24", 0 ]
 				}
 
 			}
@@ -5054,8 +5053,8 @@
 			}
 , 			{
 				"name" : "unsilent_night.maxpat",
-				"bootpath" : "~/Library/CloudStorage/OneDrive-UniversityofWaterloo/Projects/Polyphonic Rhythms/polyrhythm-project/robs playground/max",
-				"patcherrelativepath" : ".",
+				"bootpath" : "~/Library/CloudStorage/OneDrive-UniversityofWaterloo/Projects/Polyphonic Rhythms/polyrhythm-project/Audio",
+				"patcherrelativepath" : "../../Audio",
 				"type" : "JSON",
 				"implicit" : 1
 			}

@@ -31,21 +31,28 @@ bool     sampleTiming = false;
 #define DATA_PIN D1
 #define DATA_PIN_SIDES D2
 #define DEBUG_PIN D7
-#define DEFAULT_STRIP_PERIOD 7000000   // in microseconds
+#define DEFAULT_STRIP_PERIOD 7000000.0   // in microseconds
+#define STRIP_TICKS (2*(NUM_LEDS-1))
 
 // strip timing stuff
 uint64_t epochStart64  = 0;
 uint64_t nextLEDupdate64 = 0;
-uint32_t frameIndex = 0;      // this allows > 11 Million periods of 382 LEDs so 32 bits is fine
-uint32_t stripDelay = DEFAULT_STRIP_PERIOD / 2 / (NUM_LEDS-1);  // in us ; "-1" because of the fencepost problem
-uint32_t stripPeriod = DEFAULT_STRIP_PERIOD;
+// uint32_t frameIndex = 0;      // this allows > 11 Million periods of 382 LEDs so 32 bits is fine
+uint32_t stripDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // in us ; "-1" because of the fencepost problem
+// uint32_t stripPeriod = DEFAULT_STRIP_PERIOD;
+float stripPeriod = DEFAULT_STRIP_PERIOD;   // fractional period in us from MAX
+float idealDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // fractional, in us 
 uint32_t numPeriods = 0;
 uint32_t missedFrames = 0;
 uint32_t totalMissedFrames = 0;
 bool     runShow = false;
-bool     sendHeartbeat = true;
-// int32_t stepDelta = 0;
-// unsigned long nextLEDupdate = 0;
+bool     sendHeartbeat = false;
+uint32_t delayPattern[STRIP_TICKS];    // there are NUM_LEDS-1 steps between NUM_LEDS leds
+uint8_t  delayPatternIndex = 0;
+int      gradientLength = 24;
+
+
+
 
 // The "ball" is conceived as being in a 3x3 matrix, or a pixel with a 1-pixel BALL_HALO.
 // To avoid having to treat the end-points 
@@ -58,7 +65,7 @@ bool     sendHeartbeat = true;
 // - pass &leds[BALL_HALO] to addleds() instead of passing leds
 
 // ball parameters
-#define BALL_HALO 1
+#define BALL_HALO 0
 #define DEFAULT_BALL_HUE 213
 #define START_BALL_POSITION BALL_HALO+NUM_LEDS-1  // starts at the bottom of the strip
 #define START_BALL_DIRECTION -1                   // starts heading up the strip towards index 0
@@ -105,8 +112,10 @@ MacIpPair macIpTable[] = {
   {"D8:BF:C0:00:E2:C4", IPAddress(192, 168, 0, 210)},
   {"CC:50:E3:F3:E1:D5", IPAddress(192, 168, 0, 211)},
   {"BC:DD:C2:5A:4E:6C", IPAddress(192, 168, 0, 212)},
-  {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 0, 213)}
-};
+  {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 0, 213)},
+  {"84:F3:EB:10:30:54", IPAddress(192, 168, 0, 214)},
+  {"b4:e6:2d:55:39:93", IPAddress(192, 168, 0, 215)},
+  {"8c:aa:b5:c4:f9:68", IPAddress(192, 168, 0, 216)}};
 const int numEntries = sizeof(macIpTable) / sizeof(macIpTable[0]);
 
 // --- my IP default settings in case I'm not in the table ---
@@ -171,19 +180,54 @@ void sendDebugUDP(const char* msg) {
   UDP.endPacket();
 }
 
-// make this eventually to gather things that need to initialize
+// build the pattern array for indexed delays
+void buildDelayPattern(float idealDelay) {
+  
+  // compute the integer delays
+  uint32_t lowDelay = (uint32_t)floor(idealDelay);
+  uint32_t highDelay = lowDelay + 1;
+
+  // figure out how many high vs. low we need
+  float fractionHigh = ( idealDelay - (float)lowDelay );
+  // uint32_t highCount = (uint32_t)( (fractionHigh * (float)STRIP_TICKS) + 0.5);
+  // if (highCount > STRIP_TICKS) highCount = STRIP_TICKS;
+
+  // fill the matrix using Bresenham Algorithm
+  int highCount = 0;
+  int lowCount = 0;
+  float error = 0.0;
+  for (int i=0; i<STRIP_TICKS; i++) {
+    error += fractionHigh;
+    if (error >= 1.0) {
+      delayPattern[i] = highDelay;
+      highCount++;
+      error -= 1.0;
+    } else {
+      lowCount++;
+      delayPattern[i] = lowDelay;
+    }
+  }
+
+  sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(),
+                 "Built delay array with", lowDelay, highDelay, ". Counts:", 
+                 lowCount, highCount, fractionHigh, "Period:", (lowDelay*lowCount+highDelay*highCount));
+
+}
+
 void startShow() {
   runShow = true;
   sendHeartbeat = false;
   sampleIndex = 0;
   numPeriods = 0;
-  frameIndex = 0;
+  // frameIndex = 0;
   missedFrames = 0;
   totalMissedFrames = 0;
-  epochStart64 = micros64();
-  nextLEDupdate64 = epochStart64 + (uint64_t)stripDelay;
+  buildDelayPattern(idealDelay);
+  delayPatternIndex = 0;
   sampleIndex = 0;
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection, "Period", stripPeriod);
+  epochStart64 = micros64();
+  nextLEDupdate64 = epochStart64 + (uint64_t)delayPattern[0];
 }
 
 void endShow() {
@@ -192,7 +236,7 @@ void endShow() {
   // FastLED.show();
   // ballPosition = START_BALL_POSITION;
   // ballDirection = START_BALL_DIRECTION;
-  sendHeartbeat = true;
+  // sendHeartbeat = true;
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Periods", numPeriods, "Missed Steps", totalMissedFrames);
 }
 
@@ -309,8 +353,6 @@ void setup() {
   // but because of zero-indexing, that is the BALL_HALO LED)
   FastLED.addLeds<WS2812, DATA_PIN>(&leds[BALL_HALO], NUM_LEDS);
   FastLED.addLeds<WS2812, DATA_PIN_SIDES>(&ledsSides[BALL_HALO], NUM_LEDS);
-  FastLED.clear();
-  FastLED.show();
   
   // get MAC address
   String mac = WiFi.macAddress();
@@ -386,6 +428,14 @@ void setup() {
   ArduinoOTA.begin();
   Serial.println("OTA setup complete");
 
+  // set up delay pattern matrix using default period
+  buildDelayPattern(idealDelay);
+
+  // clear the LEDs
+  FastLED.clear();
+  FastLED.show();
+  delay(100);
+
   // Note sendUDPMessage can't handle String types directly; append .c_str() to send a *char
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Mac address", mac.c_str());
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Connected to", apSSID);
@@ -411,7 +461,8 @@ void handleUDP() {
   if (packetSize) {
     int len = UDP.read(incomingPacket, 255);
     if (len > 0) incomingPacket[len] = 0;
-    int value = atoi(&incomingPacket[1]); // convert the rest to integer
+    int intValue = atoi(&incomingPacket[1]); // convert the rest to integer
+    float floatValue = atof(&incomingPacket[1]); // convert the rest to float
 
     switch (incomingPacket[0]) {
 
@@ -424,23 +475,37 @@ void handleUDP() {
         flashGradient = !flashGradient;
       break;
 
+
+      case 'B':
+        gradientLength = intValue;
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting gradient length", gradientLength);
+      break;
+
       case 'H':
         sendHeartbeat = !sendHeartbeat;
       break;
 
-      // stripPeriod and stripDelay are uint32_t
+      case 'C':
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Clearing LED strips");
+        FastLED.clear();
+        FastLED.show();
+        delay(100);
+      break;
+
+      // stripPeriod, idealDelay are floats
       case 'P':
-        stripPeriod = value;
-        if (stripPeriod==0) {
+        stripPeriod = floatValue;
+        if (stripPeriod<=0.0) {
           sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Got bad period:", stripPeriod);
           break;
         }
-        stripDelay = stripPeriod / 2 / (NUM_LEDS-1);
-        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Timestep to", stripDelay, "Period (us)", stripPeriod);
+        idealDelay = (stripPeriod+0.5) / (float)STRIP_TICKS;
+        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Period to", stripPeriod, "Timesteps:", idealDelay);
+        buildDelayPattern(idealDelay);
       break;
 
       case 'S':
-        if (value) {
+        if (intValue) {
           startShow();
         } else {
           endShow();
@@ -458,26 +523,22 @@ void handleUDP() {
         //
         // the "top" of the strip is NUM_LEDS-1 in MAX and BALL_HALO here while
         // the "bottom" of the strip is 0 in MAX and BALL_HALO+NUM_LEDS-1 here
-        ballPosition = (NUM_LEDS+BALL_HALO-1) - value;
+        ballPosition = (NUM_LEDS+BALL_HALO-1) - intValue;
 
         // The default ball direction for most starting points should be "down" on the strip which is +1
         // the exception is if the starting point is BALL_HALO+NUM_LEDS-1 which is the bottom of the strip
-        // setting ballDirection=1 in that case will result in a little hiccup but the constrain call in 
-        // drawBall will avoid an array indexing issue.  This should only happen if the position happens
-        // to be updated right at the point where the ball hits that pixel, so I'm not going to make an 
-        // exception.  If we start to see the ball "sticking" to the bottom momentarily before bouncing
-        // then we can come back and make an exception
         ballDirection = (ballPosition == BALL_HALO+NUM_LEDS-1) ? -1 : 1;
         FastLED.clear();
         drawBall(ballPosition);
         FastLED.show();
+        delay(100);
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Set Position:", ballPosition);
       break;
 
       // ---------- [DIAG] measurement and export commands ----------
       // 'T' <1=start measurement, 0=stop measurement>
       case 'T':
-        if (value != 0) {
+        if (intValue != 0) {
           // start timestamp sampling and reset sampling array
           sampleTiming = true;
           sampleIndex = 0;
@@ -504,7 +565,7 @@ void handleUDP() {
       // 'R' <start_index> — send up to UDP_SAMPLE_CHUNK samples starting at start_index as binary UDP packet
       case 'R':
       {
-        uint32_t start_idx = (uint32_t) value;
+        uint32_t start_idx = (uint32_t) intValue;
         // snprintf(msg, sizeof(msg), "/download [%s] Requesting chunk at index %u", myIPstring.c_str(), start_idx);
         // sendDebugUDP(msg);
         // [DIAG] compute count using chunk defined above
@@ -562,33 +623,68 @@ void loop() {
 
     // Use monotonic 64-bit time for scheduling math
     uint64_t now = micros64();
-
-    // // calculate the delta past the next LED update step (which is incremented from epochStart)
-    // stepDelta = (int32_t)(micros()-nextLEDupdate);
-    // missedFrames = 0;
-
     // If we've passed the update time, do the update
     if (now >= nextLEDupdate64) {
 
-      // compute how many frames we might have missed using integer division
-      uint64_t delta64 = now - nextLEDupdate64;
-      missedFrames = (uint32_t)(delta64 / (uint64_t)stripDelay);
-   
-      // Update frameIndex and compute the *new* nextLEDupdate64 strictly from epoch,
-      // which prevents accumulation of rounding errors that would occur if we just += stripDelay repeatedly.
-      // We advance by missedFrames + 1 to include the current frame.
-      frameIndex += (uint32_t)(missedFrames + 1U);
-      nextLEDupdate64 = epochStart64 + ((uint64_t)frameIndex * (uint64_t)stripDelay);
+      // count missedFrames by iterating and adding the adaptive step delays from
+      // delayPattern array.  missedFrames includes the current frame.
+      missedFrames = 0;
 
-      // increment the total missed frames stat
-      totalMissedFrames += missedFrames;
+      // Safety cap so a very late system doesn't spin forever
+      const uint32_t SAFETY_MAX_STEPS = 10000;
+
+      // Advance at most SAFETY_MAX_STEPS steps to catch up
+      while ((now >= nextLEDupdate64) && (missedFrames < SAFETY_MAX_STEPS)) {
+
+        // determine current step delay from pattern
+        uint32_t curDelay = delayPattern[delayPatternIndex];
+
+        // advance nextLEDupdate by this step's delay
+        nextLEDupdate64 += (uint64_t)curDelay;
+
+        // advance pattern index and frame index
+        delayPatternIndex++;
+        if (delayPatternIndex >= STRIP_TICKS) {
+          delayPatternIndex = 0;
+          // optionally increment numPeriods when pattern wraps (if you want to count full periods)
+        }
+
+        // frameIndex++;
+        missedFrames++;
+      }
+
+      // if we hit the cap, send a debug message once
+      if (missedFrames >= SAFETY_MAX_STEPS) {
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Warning: catch-up cap hit", (uint32_t)missedFrames);
+      }
+
+      // Update total (note, missedFrames includes the current one, which is not really "missed")
+      if (missedFrames > 0) totalMissedFrames += (missedFrames - 1); 
+    
+// ------- this was replaced by adaptive step code
+    // // If we've passed the update time, do the update
+    // if (now >= nextLEDupdate64) {
+
+    //   // compute how many frames we might have missed using integer division
+    //   uint64_t delta64 = now - nextLEDupdate64;
+    //   missedFrames = (uint32_t)(delta64 / (uint64_t)stripDelay);
+   
+    //   // Update frameIndex and compute the *new* nextLEDupdate64 strictly from epoch,
+    //   // which prevents accumulation of rounding errors that would occur if we just += stripDelay repeatedly.
+    //   // We advance by missedFrames + 1 to include the current frame.
+    //   frameIndex += (uint32_t)(missedFrames + 1U);
+    //   nextLEDupdate64 = epochStart64 + ((uint64_t)frameIndex * (uint64_t)stripDelay);
+
+    //   // increment the total missed frames stat
+    //   totalMissedFrames += missedFrames;
+// ------------
 
        // clear the strips first (this doesn't display until FastLED.show() is called)
       FastLED.clear();
 
       // if missedFrames >= 1 then we need to increment the ball by more than one position
       // but we also have to take into account direction changes, so go one step at a time
-      for (int i=missedFrames+1; i>0; i--) {
+      for (int i=missedFrames; i>0; i--) {
         
         // update ball position
         ballPosition += ballDirection;
@@ -599,10 +695,10 @@ void loop() {
           ballDirection = -ballDirection;  // reverse direction
 
           if (ballDirection == -1) {          // if we're at 191 and just starting up again
-            if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
-            numPeriods+=1;
+            if (flashGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-gradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
+            numPeriods++;
           } else { // if we're at 0 and starting down
-            if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), NUM_LEDS-1, CHSV(0,0,0));}
+            if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), gradientLength, CHSV(0,0,0));}
           }
         }
       }

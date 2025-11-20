@@ -87,8 +87,8 @@ void drawBall(int pos) {
   pos = constrain(pos,BALL_HALO,BALL_HALO+NUM_LEDS-1);
 
   for (int led=pos+BALL_HALO; led>=pos-BALL_HALO; led--) {
-    leds[led] = CHSV(213,255,255);
-    ledsSides[led] = CHSV(213,255,255);
+    leds[led] = CHSV(ballHue,255,255);
+    ledsSides[led] = CHSV(ballHue,255,255);
   }
 
 }
@@ -472,17 +472,21 @@ void handleUDP() {
       break;
 
       case 'G':
-        flashGradient = !flashGradient;
-      break;
-
-
-      case 'B':
-        gradientLength = intValue;
+        if (intValue==0) {
+          flashGradient = false;
+        } else {
+          flashGradient = true;
+          gradientLength = intValue;
+        }
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting gradient length", gradientLength);
       break;
 
-      case 'H':
+      case 'B':
         sendHeartbeat = !sendHeartbeat;
+      break;
+
+      case 'H':
+        ballHue = (uint8_t)intValue;   // cast as byte just in case, so this doesn't break other things if >255
       break;
 
       case 'C':

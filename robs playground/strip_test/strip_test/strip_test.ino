@@ -109,18 +109,21 @@ MacIpPair macIpTable[] = {
   {"84:F3:EB:AC:DD:BA", IPAddress(192, 168, 0, 207)},
   {"50:02:91:EE:59:DC", IPAddress(192, 168, 0, 208)},
   {"08:F9:E0:5C:F3:81", IPAddress(192, 168, 0, 209)},
-  {"D8:BF:C0:00:E2:C4", IPAddress(192, 168, 0, 210)},
-  {"CC:50:E3:F3:E1:D5", IPAddress(192, 168, 0, 211)},
-  {"BC:DD:C2:5A:4E:6C", IPAddress(192, 168, 0, 212)},
-  {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 0, 213)},
-  {"84:F3:EB:10:30:54", IPAddress(192, 168, 0, 214)},
-  {"b4:e6:2d:55:39:93", IPAddress(192, 168, 0, 215)},
-  {"8c:aa:b5:c4:f9:68", IPAddress(192, 168, 0, 216)}};
+  {"CC:50:E3:F3:E1:D5", IPAddress(192, 168, 0, 210)},
+  {"BC:DD:C2:5A:4E:6C", IPAddress(192, 168, 0, 211)},
+  {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 0, 212)},
+  {"84:F3:EB:10:30:54", IPAddress(192, 168, 0, 213)},
+  {"b4:e6:2d:55:39:93", IPAddress(192, 168, 0, 214)},
+  {"8c:aa:b5:c4:f9:68", IPAddress(192, 168, 0, 215)}
+  };
 const int numEntries = sizeof(macIpTable) / sizeof(macIpTable[0]);
 
-// --- my IP default settings in case I'm not in the table ---
+// // --- my IP default settings in case I'm not in the table ---
 IPAddress myIP(192, 168, 0, 250); // fallback
 String myIPstring = "192.168.0.250";
+// --- my IP default settings in case I'm not in the table ---
+// IPAddress myIP(192, 168, 2, 250); // fallback
+// String myIPstring = "192.168.2.250";
 
 // --- LAN settings ---
 IPAddress gatewayIP(192, 168, 0, 1);
@@ -128,6 +131,13 @@ IPAddress subnetIP(255, 255, 255, 0);
 IPAddress MAXhostIP(192,168,0,200);
 const char* apSSID = "MargaretAve";
 const char* apPassword = "robmaudamelinesimonluc";
+
+// // --- LAN settings ---
+// IPAddress gatewayIP(192, 168, 2, 1);
+// IPAddress subnetIP(255, 255, 255, 0);
+// IPAddress MAXhostIP(192,168, 2,200);
+// const char* apSSID = "TheShed24";
+// const char* apPassword = "robmaudamelinesimonluc";
 
 // --- LAN Connection state tracking ---
 bool isConnected = false;
@@ -353,7 +363,7 @@ void setup() {
   // but because of zero-indexing, that is the BALL_HALO LED)
   FastLED.addLeds<WS2812, DATA_PIN>(&leds[BALL_HALO], NUM_LEDS);
   FastLED.addLeds<WS2812, DATA_PIN_SIDES>(&ledsSides[BALL_HALO], NUM_LEDS);
-  
+
   // get MAC address
   String mac = WiFi.macAddress();
   mac.toUpperCase();
@@ -516,8 +526,18 @@ void handleUDP() {
         }
       break;
 
+      case 'J':
+        jogBall(intValue);
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Jogging by", intValue);
+      break;
+
       case 'V':
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Version Code:", versionCode);
+      break;
+
+      case 'X':
+        ballPosition = (NUM_LEDS+BALL_HALO-1);
+        ballDirection = -1;
       break;
 
       case 'L':
@@ -590,6 +610,43 @@ void handleUDP() {
   }
 }
 
+void jogBall(int ticks) {
+
+  for (int tick=0; tick<abs(ticks); tick++) {
+    if (ticks<0) moveBall(-ballDirection);
+    if (ticks>=0) moveBall(ballDirection);
+  }
+
+}
+
+void moveBall(int direction) {
+
+  // update ball position
+  // note: this is called by the regular routine and by "jog" so direction not always = ballDirection
+  ballPosition += direction;
+
+  // if we're jogging it "back" then we want to keep ball direction the same and don't need to check limits
+  if (direction != ballDirection) {
+
+  } else {  // either jogging forward or just moving along, need to check limits
+  
+    // check limits and bounce if needed
+    if (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
+      ballPosition = constrain(ballPosition,BALL_HALO,NUM_LEDS-1+BALL_HALO);
+      ballDirection = -ballDirection;  // reverse direction
+
+      if (ballDirection == -1) {          // if we're at 191 and just starting up again
+        if (flashGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-gradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
+        numPeriods++;
+      } else { // if we're at 0 and starting down
+        // if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), gradientLength, CHSV(0,0,0));}
+      }
+    }
+
+  }
+
+}
+
 void loop() {
   
   handleUDP();              // Check for UDP packets and parse them
@@ -609,6 +666,7 @@ void loop() {
       if (sampleIndex >= DRIFT_SAMPLES) {
         // buffer full: notify host
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Measurement BUFFER FULL", "Samples", sampleIndex);
+        endShow();
       }
       // small yield to avoid blocking UDP
       yield();
@@ -691,20 +749,23 @@ void loop() {
       for (int i=missedFrames; i>0; i--) {
         
         // update ball position
-        ballPosition += ballDirection;
+        moveBall(ballDirection);
 
-        // check limits and bounce if needed
-        if (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
-          ballPosition = constrain(ballPosition,BALL_HALO,NUM_LEDS-1+BALL_HALO);
-          ballDirection = -ballDirection;  // reverse direction
+        // // update ball position
+        // ballPosition += ballDirection;
 
-          if (ballDirection == -1) {          // if we're at 191 and just starting up again
-            if (flashGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-gradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
-            numPeriods++;
-          } else { // if we're at 0 and starting down
-            if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), gradientLength, CHSV(0,0,0));}
-          }
-        }
+        // // check limits and bounce if needed
+        // if (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
+        //   ballPosition = constrain(ballPosition,BALL_HALO,NUM_LEDS-1+BALL_HALO);
+        //   ballDirection = -ballDirection;  // reverse direction
+
+        //   if (ballDirection == -1) {          // if we're at 191 and just starting up again
+        //     if (flashGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-gradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
+        //     numPeriods++;
+        //   } else { // if we're at 0 and starting down
+        //     // if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), gradientLength, CHSV(0,0,0));}
+        //   }
+        // }
       }
       
       // draw the ball
@@ -736,7 +797,7 @@ void loop() {
 
     // // Clear the strips
     // FastLED.clear();
-    // FastLED.show();
+    FastLED.show();
 
     // Send UDP heartbeat -- NOTE THIS CAUSES STUTTER IN THE DISPLAY SO DON'T CALL DURING SHOW
     // (i.e., don't put it directly in the UDP handler routine, which is called during the show)

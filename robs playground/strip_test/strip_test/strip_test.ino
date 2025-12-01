@@ -1,5 +1,3 @@
-// --- Begin adapted sketch: original comments preserved, diagnostic additions marked [DIAG] ---
-
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <OSCBundle.h>
@@ -22,7 +20,6 @@ const char* versionCode = __DATE__ " " __TIME__;
 #define DRIFT_SAMPLES 3600   // 3600 samples @ 1Hz = 1 hour (use uint64 timestamps)
 #define SAMPLE_INTERVAL_US 4000000ULL  // in us; the ULL suffix specifies 64-bit (unsigned long long)
 uint64_t samples64[DRIFT_SAMPLES];
-// uint64_t nextSampleTime64 = 0;
 uint16_t sampleIndex = 0;
 bool     sampleTiming = false;
 
@@ -37,9 +34,7 @@ bool     sampleTiming = false;
 // strip timing stuff
 uint64_t epochStart64  = 0;
 uint64_t nextLEDupdate64 = 0;
-// uint32_t frameIndex = 0;      // this allows > 11 Million periods of 382 LEDs so 32 bits is fine
 uint32_t stripDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // in us ; "-1" because of the fencepost problem
-// uint32_t stripPeriod = DEFAULT_STRIP_PERIOD;
 float stripPeriod = DEFAULT_STRIP_PERIOD;   // fractional period in us from MAX
 float idealDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // fractional, in us 
 uint32_t numPeriods = 0;
@@ -49,7 +44,8 @@ bool     runShow = false;
 bool     sendHeartbeat = false;
 uint32_t delayPattern[STRIP_TICKS];    // there are NUM_LEDS-1 steps between NUM_LEDS leds
 uint8_t  delayPatternIndex = 0;
-int      gradientLength = 24;
+int      bottomGradientLength = 24;
+int      topGradientLength = 24;
 
 
 
@@ -72,7 +68,8 @@ int      gradientLength = 24;
 int     ballDirection = START_BALL_DIRECTION;
 uint8_t ballPosition = START_BALL_POSITION;      
 uint8_t ballHue = DEFAULT_BALL_HUE;
-bool    flashGradient = true;
+bool    flashBottomGradient = true;
+bool    flashTopGradient = true;
 
 // create the RGB led struct arrays with BALL_HALO elements on ends to help with bouncing
 // valid array indices go from 0 to NUM_LEDS+2*BALL_HALO-1
@@ -99,45 +96,62 @@ struct MacIpPair {
   IPAddress ip;
 };
 
+// two different networks: 192.168.0.xxx is Rob's at-home network for testing
+// 192.68.2.xxx is the local LAN set up for the show with a travel router
 MacIpPair macIpTable[] = {
-  {"84:F3:EB:10:32:B6", IPAddress(192, 168, 0, 201)}, 
-  {"8C:AA:B5:08:DF:0C", IPAddress(192, 168, 0, 202)}, 
-  {"84:F3:EB:6C:31:70", IPAddress(192, 168, 0, 203)},
-  {"40:22:D8:8E:A2:C4", IPAddress(192, 168, 0, 204)},
-  {"EC:FA:BC:CD:F3:48", IPAddress(192, 168, 0, 205)},
-  {"84:F3:EB:10:30:C3", IPAddress(192, 168, 0, 206)},
-  {"84:F3:EB:AC:DD:BA", IPAddress(192, 168, 0, 207)},
-  {"50:02:91:EE:59:DC", IPAddress(192, 168, 0, 208)},
-  {"08:F9:E0:5C:F3:81", IPAddress(192, 168, 0, 209)},
-  {"CC:50:E3:F3:E1:D5", IPAddress(192, 168, 0, 210)},
-  {"BC:DD:C2:5A:4E:6C", IPAddress(192, 168, 0, 211)},
-  {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 0, 212)},
-  {"84:F3:EB:10:30:54", IPAddress(192, 168, 0, 213)},
-  {"b4:e6:2d:55:39:93", IPAddress(192, 168, 0, 214)},
-  {"8c:aa:b5:c4:f9:68", IPAddress(192, 168, 0, 215)}
+  // {"84:F3:EB:10:32:B6", IPAddress(192, 168, 0, 201)}, 
+  // {"8C:AA:B5:08:DF:0C", IPAddress(192, 168, 0, 202)}, 
+  // {"84:F3:EB:6C:31:70", IPAddress(192, 168, 0, 203)},
+  // {"40:22:D8:8E:A2:C4", IPAddress(192, 168, 0, 204)},
+  // {"EC:FA:BC:CD:F3:48", IPAddress(192, 168, 0, 205)},
+  // {"84:F3:EB:10:30:C3", IPAddress(192, 168, 0, 206)},
+  // {"84:F3:EB:AC:DD:BA", IPAddress(192, 168, 0, 207)},
+  // {"50:02:91:EE:59:DC", IPAddress(192, 168, 0, 208)},
+  // {"08:F9:E0:5C:F3:81", IPAddress(192, 168, 0, 209)},
+  // {"CC:50:E3:F3:E1:D5", IPAddress(192, 168, 0, 210)},
+  // {"BC:DD:C2:5A:4E:6C", IPAddress(192, 168, 0, 211)},
+  // {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 0, 212)},
+  // {"84:F3:EB:10:30:54", IPAddress(192, 168, 0, 213)},
+  // {"b4:e6:2d:55:39:93", IPAddress(192, 168, 0, 214)},
+  // {"8c:aa:b5:c4:f9:68", IPAddress(192, 168, 0, 215)}  
+  {"84:F3:EB:10:32:B6", IPAddress(192, 168, 2, 201)}, 
+  {"8C:AA:B5:08:DF:0C", IPAddress(192, 168, 2, 202)}, 
+  {"84:F3:EB:6C:31:70", IPAddress(192, 168, 2, 203)},
+  {"40:22:D8:8E:A2:C4", IPAddress(192, 168, 2, 204)},
+  {"EC:FA:BC:CD:F3:48", IPAddress(192, 168, 2, 205)},
+  {"84:F3:EB:10:30:C3", IPAddress(192, 168, 2, 206)},
+  {"84:F3:EB:AC:DD:BA", IPAddress(192, 168, 2, 207)},
+  {"50:02:91:EE:59:DC", IPAddress(192, 168, 2, 208)},
+  {"08:F9:E0:5C:F3:81", IPAddress(192, 168, 2, 209)},
+  {"CC:50:E3:F3:E1:D5", IPAddress(192, 168, 2, 210)},
+  {"BC:DD:C2:5A:4E:6C", IPAddress(192, 168, 2, 211)},
+  {"D8:BF:C0:0F:97:38", IPAddress(192, 168, 2, 212)},
+  {"84:F3:EB:10:30:54", IPAddress(192, 168, 2, 213)},
+  {"b4:e6:2d:55:39:93", IPAddress(192, 168, 2, 214)},
+  {"8c:aa:b5:c4:f9:68", IPAddress(192, 168, 2, 215)}
   };
 const int numEntries = sizeof(macIpTable) / sizeof(macIpTable[0]);
 
 // // --- my IP default settings in case I'm not in the table ---
-IPAddress myIP(192, 168, 0, 250); // fallback
-String myIPstring = "192.168.0.250";
+// IPAddress myIP(192, 168, 0, 250); // fallback
+// String myIPstring = "192.168.0.250";
 // --- my IP default settings in case I'm not in the table ---
-// IPAddress myIP(192, 168, 2, 250); // fallback
-// String myIPstring = "192.168.2.250";
+IPAddress myIP(192, 168, 2, 250); // fallback
+String myIPstring = "192.168.2.250";
 
-// --- LAN settings ---
-IPAddress gatewayIP(192, 168, 0, 1);
-IPAddress subnetIP(255, 255, 255, 0);
-IPAddress MAXhostIP(192,168,0,200);
-const char* apSSID = "MargaretAve";
-const char* apPassword = "robmaudamelinesimonluc";
-
-// // --- LAN settings ---
-// IPAddress gatewayIP(192, 168, 2, 1);
+// --- Rob's home LAN settings ---
+// IPAddress gatewayIP(192, 168, 0, 1);
 // IPAddress subnetIP(255, 255, 255, 0);
-// IPAddress MAXhostIP(192,168, 2,200);
-// const char* apSSID = "TheShed24";
+// IPAddress MAXhostIP(192,168,0,200);
+// const char* apSSID = "MargaretAve";
 // const char* apPassword = "robmaudamelinesimonluc";
+
+// // --- Travel router LAN settings ---
+IPAddress gatewayIP(192, 168, 2, 1);
+IPAddress subnetIP(255, 255, 255, 0);
+IPAddress MAXhostIP(192,168, 2,200);
+const char* apSSID = "TheShed24";
+const char* apPassword = "robmaudamelinesimonluc";
 
 // --- LAN Connection state tracking ---
 bool isConnected = false;
@@ -229,7 +243,6 @@ void startShow() {
   sendHeartbeat = false;
   sampleIndex = 0;
   numPeriods = 0;
-  // frameIndex = 0;
   missedFrames = 0;
   totalMissedFrames = 0;
   buildDelayPattern(idealDelay);
@@ -242,11 +255,6 @@ void startShow() {
 
 void endShow() {
   runShow = false;
-  // FastLED.clear();
-  // FastLED.show();
-  // ballPosition = START_BALL_POSITION;
-  // ballDirection = START_BALL_DIRECTION;
-  // sendHeartbeat = true;
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Stopping Show | Periods", numPeriods, "Missed Steps", totalMissedFrames);
 }
 
@@ -285,9 +293,6 @@ void sendSamplesUDP(uint32_t start_idx, uint16_t count) {
   uint32_t payload_bytes = (uint32_t)count * 8;
   uint32_t pkt_size = header + payload_bytes;
 
-  // snprintf(msg, sizeof(msg), "/download [%s] Constructing packet with %u bytes", myIPstring.c_str(), payload_bytes);
-  // sendDebugUDP(msg);
-
   // Guard: if packet > 1400, reduce count (shouldn't happen if chunk size is tuned)
   if (pkt_size > 1400) {
     uint16_t newcount = (1400 - header) / 8;
@@ -304,17 +309,11 @@ void sendSamplesUDP(uint32_t start_idx, uint16_t count) {
   write_u32_be(buf, start_idx);
   write_u16_be(buf + 4, count);
 
-  // snprintf(msg, sizeof(msg), "/download [%s] Writing packet to buffer", myIPstring.c_str());
-  // sendDebugUDP(msg);
-
   // copy samples (big-endian)
   for (uint16_t i = 0; i < count; ++i) {
     uint64_t v = samples64[start_idx + i];
     write_u64_be(buf + header + (i * 8), v);
   }
-
-  // snprintf(msg, sizeof(msg), "/download [%s] Sending Packet with size %u", myIPstring.c_str(), pkt_size);
-  // sendDebugUDP(msg);
 
   // send raw UDP packet to MAXhostIP:sendPort
   UDP.beginPacket(MAXhostIP, sendPort);
@@ -361,8 +360,8 @@ void setup() {
   // pass a pointer to the BALL_HALO element, rather than the entire array
   // because of the "bounce halo" (e.g., if the halo is 1 LED then we pass the pointer to the second LED
   // but because of zero-indexing, that is the BALL_HALO LED)
-  FastLED.addLeds<WS2812, DATA_PIN>(&leds[BALL_HALO], NUM_LEDS);
-  FastLED.addLeds<WS2812, DATA_PIN_SIDES>(&ledsSides[BALL_HALO], NUM_LEDS);
+  FastLED.addLeds<WS2812, DATA_PIN, GRB>(&leds[BALL_HALO], NUM_LEDS);
+  FastLED.addLeds<WS2812, DATA_PIN_SIDES, GRB>(&ledsSides[BALL_HALO], NUM_LEDS);
 
   // get MAC address
   String mac = WiFi.macAddress();
@@ -481,24 +480,39 @@ void handleUDP() {
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Latest Show Stats: Periods", numPeriods, "Missed Steps", totalMissedFrames);
       break;
 
+      // set length of flash for the bottom gradient
       case 'G':
         if (intValue==0) {
-          flashGradient = false;
+          flashBottomGradient = false;
         } else {
-          flashGradient = true;
-          gradientLength = intValue;
+          flashBottomGradient = true;
+          bottomGradientLength = intValue;
         }
-        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting gradient length", gradientLength);
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting bottom gradient length", bottomGradientLength);
       break;
 
+      // set length of flash for the bottom gradient
+      case 'F':
+        if (intValue==0) {
+          flashTopGradient = false;
+        } else {
+          flashTopGradient = true;
+          topGradientLength = intValue;
+        }
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting top gradient length", topGradientLength);
+      break;
+
+      // toggle sending of UDP heartbeat (only when the show isn't running)
       case 'B':
         sendHeartbeat = !sendHeartbeat;
       break;
 
+      // 0-255 hue value
       case 'H':
         ballHue = (uint8_t)intValue;   // cast as byte just in case, so this doesn't break other things if >255
       break;
 
+      // clear shaft LEDs
       case 'C':
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Clearing LED strips");
         FastLED.clear();
@@ -518,6 +532,7 @@ void handleUDP() {
         buildDelayPattern(idealDelay);
       break;
 
+      // Start (S1) and stop (S0) the show
       case 'S':
         if (intValue) {
           startShow();
@@ -526,6 +541,7 @@ void handleUDP() {
         }
       break;
 
+      // Jog the ball.  +ve values shift in the direction of travel.
       case 'J':
         jogBall(intValue);
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Jogging by", intValue);
@@ -535,11 +551,14 @@ void handleUDP() {
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Version Code:", versionCode);
       break;
 
+      // reset ball position to 0 and keep going
+      // equivalent to L0, but designed to be run during the show so doesn't have the clear + delay
       case 'X':
         ballPosition = (NUM_LEDS+BALL_HALO-1);
         ballDirection = -1;
       break;
 
+      // set the ball location
       case 'L':
         // the strip is reversed compared to the MAX sliders
         // both are zero-indexed but 0 is at the top of the strip and bottom of the MAX slider
@@ -636,10 +655,10 @@ void moveBall(int direction) {
       ballDirection = -ballDirection;  // reverse direction
 
       if (ballDirection == -1) {          // if we're at 191 and just starting up again
-        if (flashGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-gradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
+        if (flashBottomGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-bottomGradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
         numPeriods++;
       } else { // if we're at 0 and starting down
-        // if (flashGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), gradientLength, CHSV(0,0,0));}
+        if (flashTopGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), topGradientLength, CHSV(0,0,0));}
       }
     }
 

@@ -1735,7 +1735,7 @@
 					"patching_rect" : [ 1516.0, 795.718249768018723, 40.0, 22.0 ],
 					"presentation" : 1,
 					"presentation_rect" : [ 532.0, 352.0, 40.0, 22.0 ],
-					"text" : "H172"
+					"text" : "J2"
 				}
 
 			}
@@ -1998,7 +1998,7 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 92.849206447601318, 314.0, 83.0, 20.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 106.0, 290.0, 150.0, 20.0 ],
+					"presentation_rect" : [ 77.0, 436.0, 150.0, 20.0 ],
 					"text" : "chime at top?"
 				}
 
@@ -2013,7 +2013,7 @@
 					"parameter_enable" : 0,
 					"patching_rect" : [ 68.849206447601318, 312.0, 24.0, 24.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 82.0, 288.0, 24.0, 24.0 ]
+					"presentation_rect" : [ 53.0, 434.0, 24.0, 24.0 ]
 				}
 
 			}
@@ -2159,8 +2159,10 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 27.349206447601318, 66.0, 35.0, 22.0 ],
-					"text" : "reset"
+					"patching_rect" : [ 27.349206447601318, 66.0, 40.0, 22.0 ],
+					"presentation" : 1,
+					"presentation_rect" : [ 52.0, 313.0, 40.0, 22.0 ],
+					"text" : "Reset"
 				}
 
 			}
@@ -2243,7 +2245,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 364.373010694980621, 762.0, 50.0, 22.0 ],
-					"text" : "2"
+					"text" : "0"
 				}
 
 			}
@@ -2255,7 +2257,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 364.373010694980621, 727.0, 50.0, 22.0 ],
-					"text" : "130"
+					"text" : "25"
 				}
 
 			}
@@ -4706,7 +4708,7 @@
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 109.349206447601318, 66.0, 52.0, 22.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 52.0, 322.0, 52.0, 22.0 ],
+					"presentation_rect" : [ 52.0, 285.0, 52.0, 22.0 ],
 					"text" : "Initialize"
 				}
 
@@ -4747,7 +4749,7 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 281.349206447601318, 178.0, 150.0, 20.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 81.0, 439.0, 150.0, 20.0 ],
+					"presentation_rect" : [ 80.0, 409.0, 150.0, 20.0 ],
 					"text" : "audio on/off"
 				}
 
@@ -4762,7 +4764,7 @@
 					"parameter_enable" : 0,
 					"patching_rect" : [ 254.349206447601318, 174.0, 24.0, 24.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 54.0, 437.0, 24.0, 24.0 ]
+					"presentation_rect" : [ 53.0, 405.0, 24.0, 24.0 ]
 				}
 
 			}
@@ -4774,7 +4776,7 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 278.349206447601318, 102.0, 150.0, 20.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 81.0, 408.0, 150.0, 20.0 ],
+					"presentation_rect" : [ 79.0, 379.0, 150.0, 20.0 ],
 					"text" : "sim display on/off"
 				}
 
@@ -4789,7 +4791,7 @@
 					"parameter_enable" : 0,
 					"patching_rect" : [ 252.349206447601318, 98.0, 24.0, 24.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 54.0, 406.0, 24.0, 24.0 ]
+					"presentation_rect" : [ 53.0, 375.0, 24.0, 24.0 ]
 				}
 
 			}
@@ -4863,7 +4865,7 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 136.349206447601318, 178.0, 150.0, 20.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 81.0, 377.0, 150.0, 20.0 ],
+					"presentation_rect" : [ 82.0, 345.0, 150.0, 20.0 ],
 					"text" : "show on/off"
 				}
 
@@ -5837,7 +5839,7 @@
 					"parameter_enable" : 0,
 					"patching_rect" : [ 107.349206447601318, 176.0, 24.0, 24.0 ],
 					"presentation" : 1,
-					"presentation_rect" : [ 54.0, 375.0, 24.0, 24.0 ]
+					"presentation_rect" : [ 53.0, 343.0, 24.0, 24.0 ]
 				}
 
 			}
@@ -7545,10 +7547,10 @@
 				"boxes" : [ "obj-157", "obj-162", "obj-163", "obj-164", "obj-165", "obj-166", "obj-167", "obj-168", "obj-169", "obj-170", "obj-171", "obj-172", "obj-175", "obj-176", "obj-177" ]
 			}
 , 			{
-				"boxes" : [ "obj-149", "obj-81", "obj-43", "obj-73", "obj-74", "obj-108", "obj-92", "obj-40", "obj-8", "obj-76", "obj-83", "obj-12", "obj-13", "obj-150", "obj-48", "obj-49" ]
+				"boxes" : [ "obj-94", "obj-17", "obj-30", "obj-38", "obj-15", "obj-33", "obj-21", "obj-46", "obj-89", "obj-29", "obj-42", "obj-91", "obj-39", "obj-96" ]
 			}
 , 			{
-				"boxes" : [ "obj-94", "obj-17", "obj-30", "obj-38", "obj-15", "obj-33", "obj-21", "obj-46", "obj-89", "obj-29", "obj-42", "obj-91", "obj-39", "obj-96" ]
+				"boxes" : [ "obj-149", "obj-81", "obj-43", "obj-73", "obj-74", "obj-108", "obj-92", "obj-40", "obj-8", "obj-76", "obj-83", "obj-12", "obj-13", "obj-150", "obj-48", "obj-49" ]
 			}
  ],
 		"styles" : [ 			{

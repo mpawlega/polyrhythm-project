@@ -68,8 +68,11 @@ int      topGradientLength = 24;
 int     ballDirection = START_BALL_DIRECTION;
 uint8_t ballPosition = START_BALL_POSITION;      
 uint8_t ballHue = DEFAULT_BALL_HUE;
+// uint8_t ballFlashHue = DEFAULT_BALL_HUE;
 bool    flashBottomGradient = true;
-bool    flashTopGradient = true;
+bool    flashTopGradient = false;
+// bool    flashingNow = false;
+
 
 // create the RGB led struct arrays with BALL_HALO elements on ends to help with bouncing
 // valid array indices go from 0 to NUM_LEDS+2*BALL_HALO-1
@@ -84,6 +87,8 @@ void drawBall(int pos) {
   pos = constrain(pos,BALL_HALO,BALL_HALO+NUM_LEDS-1);
 
   for (int led=pos+BALL_HALO; led>=pos-BALL_HALO; led--) {
+    // leds[led] = flashingNow ? CHSV(0,0,255) : CHSV(ballHue,255,255);
+    // ledsSides[led] = flashingNow ? CHSV(0,0,255) : CHSV(ballHue,255,255);
     leds[led] = CHSV(ballHue,255,255);
     ledsSides[led] = CHSV(ballHue,255,255);
   }
@@ -482,23 +487,15 @@ void handleUDP() {
 
       // set length of flash for the bottom gradient
       case 'G':
-        if (intValue==0) {
-          flashBottomGradient = false;
-        } else {
-          flashBottomGradient = true;
-          bottomGradientLength = intValue;
-        }
+        bottomGradientLength = intValue;
+        flashBottomGradient = (bottomGradientLength>0);
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting bottom gradient length", bottomGradientLength);
       break;
 
       // set length of flash for the bottom gradient
       case 'F':
-        if (intValue==0) {
-          flashTopGradient = false;
-        } else {
-          flashTopGradient = true;
-          topGradientLength = intValue;
-        }
+        topGradientLength = intValue;
+        flashTopGradient = (topGradientLength>0);        
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting top gradient length", topGradientLength);
       break;
 
@@ -655,10 +652,16 @@ void moveBall(int direction) {
       ballDirection = -ballDirection;  // reverse direction
 
       if (ballDirection == -1) {          // if we're at 191 and just starting up again
-        if (flashBottomGradient) { fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-bottomGradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); }
+        if (flashBottomGradient) { 
+          fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-bottomGradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); 
+          // flashingNow = true;
+        }
         numPeriods++;
       } else { // if we're at 0 and starting down
-        if (flashTopGradient) { fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), topGradientLength, CHSV(0,0,0));}
+        if (flashTopGradient) { 
+          fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), topGradientLength, CHSV(0,0,0));
+          // flashingNow = true;
+        }
       }
     }
 
@@ -795,9 +798,9 @@ void loop() {
       FastLED.show();
       digitalWrite(DEBUG_PIN,LOW);
 
-      // clear the update flag if using ISR
-      // updateLEDs = false;
-      
+      // clear the flashingNow flag
+      // flashingNow = false;
+
     } // end of if(updateLEDs)
 
   } else {    // if show not running

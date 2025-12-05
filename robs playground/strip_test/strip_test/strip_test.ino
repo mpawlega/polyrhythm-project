@@ -1,3 +1,30 @@
+/*******************
+
+For later:
+
+y = h + k(t-T/2)^2 | y=LED pos with 191 at bottom, T=period
+k = 4(N-h)/T^2     | N=NUMLEDS, h=apex of parabola (0 at top)
+
+--> t = T-sqrt(T^2*(y-h)/(N-h))
+
+fills the time from 0 to T/2
+then fill the T/2 to T backwards
+i.e., delayMatrix[0+i]=delayMatrix[STRIP_TICKS-i]
+
+Need to redefine gravity variables in the current code because they all 
+assume 0 is at the bottom of the strip.  Then, can set protocol to be 
+
+gX where X=0 means linear sweep and if X>0 then gravityApex = NUM_LEDS-X-1
+
+(i.e., just set that, and then check gravityApex = NUM_LEDS-1 to see if we're 
+doing linear sweep or gravitySim)
+*/
+
+
+
+
+
+
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <OSCBundle.h>

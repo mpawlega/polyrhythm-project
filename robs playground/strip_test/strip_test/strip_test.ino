@@ -29,23 +29,25 @@ bool     sampleTiming = false;
 #define DATA_PIN_SIDES D2
 #define DEBUG_PIN D7
 #define DEFAULT_STRIP_PERIOD 7000000.0   // in microseconds
-#define STRIP_TICKS (2*(NUM_LEDS-1))
+#define STRIP_TICKS (2*(NUM_LEDS-1)) // there are NUM_LEDS-1 steps between NUM_LEDS leds
 
 // strip timing stuff
 uint64_t epochStart64  = 0;
 uint64_t nextLEDupdate64 = 0;
 uint32_t stripDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // in us ; "-1" because of the fencepost problem
-float stripPeriod = DEFAULT_STRIP_PERIOD;   // fractional period in us from MAX
-float idealDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // fractional, in us 
+float    stripPeriod = DEFAULT_STRIP_PERIOD;   // fractional period in us from MAX
+float    idealDelay = DEFAULT_STRIP_PERIOD / STRIP_TICKS;  // fractional, in us 
 uint32_t numPeriods = 0;
 uint32_t missedFrames = 0;
 uint32_t totalMissedFrames = 0;
 bool     runShow = false;
 bool     sendHeartbeat = false;
-uint32_t delayPattern[STRIP_TICKS];    // there are NUM_LEDS-1 steps between NUM_LEDS leds
+bool     gravitySim = false;
+uint32_t delayPattern[STRIP_TICKS];
 uint8_t  delayPatternIndex = 0;
-int      bottomGradientLength = 24;
-int      topGradientLength = 24;
+int      bottomGradientLength = 191;
+int      topGradientLength = 0;
+uint8_t  gravityApex = 100;    // set the default top LED for the gravity sim to top of the strip
 
 
 
@@ -71,6 +73,7 @@ uint8_t ballHue = DEFAULT_BALL_HUE;
 // uint8_t ballFlashHue = DEFAULT_BALL_HUE;
 bool    flashBottomGradient = true;
 bool    flashTopGradient = false;
+uint8_t flashZone = 0;          // the number of pixels from the ends during which to flash
 // bool    flashingNow = false;
 
 
@@ -210,36 +213,83 @@ void sendDebugUDP(const char* msg) {
 }
 
 // build the pattern array for indexed delays
-void buildDelayPattern(float idealDelay) {
+void buildDelayPattern() {
   
-  // compute the integer delays
-  uint32_t lowDelay = (uint32_t)floor(idealDelay);
-  uint32_t highDelay = lowDelay + 1;
-
-  // figure out how many high vs. low we need
-  float fractionHigh = ( idealDelay - (float)lowDelay );
-  // uint32_t highCount = (uint32_t)( (fractionHigh * (float)STRIP_TICKS) + 0.5);
-  // if (highCount > STRIP_TICKS) highCount = STRIP_TICKS;
-
-  // fill the matrix using Bresenham Algorithm
-  int highCount = 0;
-  int lowCount = 0;
+  // error to track in the accumulator
   float error = 0.0;
-  for (int i=0; i<STRIP_TICKS; i++) {
-    error += fractionHigh;
-    if (error >= 1.0) {
-      delayPattern[i] = highDelay;
-      highCount++;
-      error -= 1.0;
-    } else {
-      lowCount++;
-      delayPattern[i] = lowDelay;
-    }
-  }
 
-  sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(),
-                 "Built delay array with", lowDelay, highDelay, ". Counts:", 
-                 lowCount, highCount, fractionHigh, "Period:", (lowDelay*lowCount+highDelay*highCount));
+  // if linear...
+  if (!gravitySim) {
+    idealDelay = (stripPeriod+0.5) / (float)STRIP_TICKS;
+
+    // compute the integer delays
+    uint32_t lowDelay = (uint32_t)floor(idealDelay);
+    uint32_t highDelay = lowDelay + 1;
+    int highCount = 0;
+    int lowCount = 0;
+
+    // figure out how many high vs. low we need
+    float fractionHigh = ( idealDelay - (float)lowDelay );
+    // uint32_t highCount = (uint32_t)( (fractionHigh * (float)STRIP_TICKS) + 0.5);
+    // if (highCount > STRIP_TICKS) highCount = STRIP_TICKS;
+
+    // fill the matrix using Bresenham Algorithm
+
+    for (int i=0; i<STRIP_TICKS; i++) {
+      error += fractionHigh;
+      if (error >= 1.0) {
+        delayPattern[i] = highDelay;
+        highCount++;
+        error -= 1.0;
+      } else {
+        lowCount++;
+        delayPattern[i] = lowDelay;
+      }
+    }
+
+    sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(),
+                  "Built linear delay array with", lowDelay, highDelay, ". Counts:", 
+                  lowCount, highCount, fractionHigh, "Period:", (lowDelay*lowCount+highDelay*highCount));
+  } 
+
+  // if gravitySim
+ 
+  else {
+    uint32_t totalPeriod = 0;   // track total time to make sure it's equal to period
+
+    // the parabola is described as y = ki * (T^2/4 - (t-T/2)^2)
+    // where T=stripPeriod, t=time, y=LED position (0..NUM_LEDS-1)
+    // and ki is a strip-dependant scaling factor to make the ends work at t=T and t=0
+    // ki = 4*h/T^2, where h is the peak of the parabola in LED position
+    // (note LED position here is reversed: the top of the parabola is "higher" even
+    // though the LED numbers are getting closer to zero because the 0 LED is at the top
+    // of the strip)
+    float ks = 4.0*(float)gravityApex/(stripPeriod*stripPeriod);
+
+    // compute the delays for the first half and fill the array from both sides since
+    // the curve is symmetric
+    for (int i=0; i<STRIP_TICKS/2; i++) {
+ 
+      // the first delay in the array is from y=0 to y=1
+      // delay between i and i+1 is t_i+1 - t_i
+      // where t_i = 1/2*(T±sqrt(T^2-4*yi/ks))
+      float t1 = (stripPeriod - sqrtf(stripPeriod*stripPeriod-4.0*(float)(i+1)/ks))/2.0;
+      float t0 = (stripPeriod - sqrtf(stripPeriod*stripPeriod-4.0*(float)(i)/ks))/2.0;
+      float dt = t1-t0;
+      delayPattern[i] = (uint32_t)dt;
+      delayPattern[STRIP_TICKS-1-i] = (uint32_t)dt;
+      error += 2*(dt - (float)delayPattern[i]);
+      if (error >= 2.0) {
+        delayPattern[i] += 1;
+        delayPattern[STRIP_TICKS-i] += 1;
+        error -= 2.0;
+      }
+      totalPeriod += 2 * delayPattern[i];
+    }
+
+    sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(),
+              "Built parabolic delay array with ideal period", stripPeriod, "vs", totalPeriod, "and height", gravityApex, "k", ks);
+  }
 
 }
 
@@ -250,7 +300,7 @@ void startShow() {
   numPeriods = 0;
   missedFrames = 0;
   totalMissedFrames = 0;
-  buildDelayPattern(idealDelay);
+  buildDelayPattern();
   delayPatternIndex = 0;
   sampleIndex = 0;
   sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Starting Show | Position", ballPosition, "Direction", ballDirection, "Period", stripPeriod);
@@ -443,7 +493,7 @@ void setup() {
   Serial.println("OTA setup complete");
 
   // set up delay pattern matrix using default period
-  buildDelayPattern(idealDelay);
+  buildDelayPattern();
 
   // clear the LEDs
   FastLED.clear();
@@ -499,9 +549,22 @@ void handleUDP() {
         sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting top gradient length", topGradientLength);
       break;
 
+      // set number of pixels from end to flash within, flashZone (0=just at ends)
+      case 'f':
+        flashZone = intValue;
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting flash zone", flashZone);
+      break;
+
       // toggle sending of UDP heartbeat (only when the show isn't running)
       case 'B':
         sendHeartbeat = !sendHeartbeat;
+      break;
+
+      // gXXX set gravity simulation apex for the parabola, XXX=0 means linear sweep
+      case 'g':
+        gravityApex = intValue;
+        gravitySim = (gravitySim>0);   // set flag true if non-zero
+        sendUDPMessage(&debugMsg, MAXhostIP, myIPstring.c_str(), "Setting gravity apex", topGradientLength);
       break;
 
       // 0-255 hue value
@@ -517,16 +580,16 @@ void handleUDP() {
         delay(100);
       break;
 
-      // stripPeriod, idealDelay are floats
+      // stripPeriod is float
       case 'P':
         stripPeriod = floatValue;
         if (stripPeriod<=0.0) {
           sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Got bad period:", stripPeriod);
           break;
         }
-        idealDelay = (stripPeriod+0.5) / (float)STRIP_TICKS;
-        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Period to", stripPeriod, "Timesteps:", idealDelay);
-        buildDelayPattern(idealDelay);
+        // idealDelay = (stripPeriod+0.5) / (float)STRIP_TICKS;
+        sendUDPMessage(&statusMsg, MAXhostIP, myIPstring.c_str(), "Setting Period to", stripPeriod, "Gravity Simluation", gravitySim);
+        buildDelayPattern();
       break;
 
       // Start (S1) and stop (S0) the show
@@ -637,7 +700,7 @@ void jogBall(int ticks) {
 
 void moveBall(int direction) {
 
-  // update ball position
+  // update ball position 
   // note: this is called by the regular routine and by "jog" so direction not always = ballDirection
   ballPosition += direction;
 
@@ -647,24 +710,43 @@ void moveBall(int direction) {
   } else {  // either jogging forward or just moving along, need to check limits
   
     // check limits and bounce if needed
+    // if (!gravitySim && (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO)) {
     if (ballPosition <= BALL_HALO || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
       ballPosition = constrain(ballPosition,BALL_HALO,NUM_LEDS-1+BALL_HALO);
       ballDirection = -ballDirection;  // reverse direction
 
-      if (ballDirection == -1) {          // if we're at 191 and just starting up again
-        if (flashBottomGradient) { 
-          fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-bottomGradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); 
-          // flashingNow = true;
-        }
-        numPeriods++;
-      } else { // if we're at 0 and starting down
-        if (flashTopGradient) { 
-          fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), topGradientLength, CHSV(0,0,0));
-          // flashingNow = true;
-        }
-      }
+      // if (ballDirection == -1) {          // if we're at 191 and just starting up again
+      //   if (flashBottomGradient) { 
+      //     fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-bottomGradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); 
+      //     // flashingNow = true;
+      //   }
+      //   numPeriods++;
+      // } else { // if we're at 0 and starting down
+      //   if (flashTopGradient) { 
+      //     fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), topGradientLength, CHSV(0,0,0));
+      //     // flashingNow = true;
+      //   }
+      // }
     }
 
+    // if (gravitySim && (ballPosition <= (NUM_LEDS - gravityApex + BALL_HALO)) || ballPosition >= NUM_LEDS - 1 + BALL_HALO) {
+    //   ballPosition = constrain(ballPosition,NUM_LEDS - gravityApex + BALL_HALO,NUM_LEDS-1+BALL_HALO);
+    //   ballDirection = -ballDirection;  // reverse direction
+    // }
+
+  }
+
+}
+
+void flashBall(int ballPosition) {
+
+  // if we're near the bottom and flashing at bottom
+  if ((ballPosition >= NUM_LEDS - 1 + BALL_HALO - flashZone) && flashBottomGradient) {
+    fill_gradient(&leds[BALL_HALO], NUM_LEDS-1-bottomGradientLength, CHSV(0,0,0), NUM_LEDS-1, CHSV(0,0,128)); 
+  }
+
+  if ((ballPosition <= BALL_HALO + flashZone) && flashTopGradient) {
+    fill_gradient(&leds[BALL_HALO], 0, CHSV(0,0,128), topGradientLength, CHSV(0,0,0));
   }
 
 }
@@ -790,6 +872,9 @@ void loop() {
         // }
       }
       
+      // flash as needed
+      flashBall(ballPosition);
+
       // draw the ball
       drawBall(ballPosition);
 

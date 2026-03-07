@@ -13,7 +13,7 @@ As with minimalist pioneer Sol LeWitt, simple rules generate complex and beautif
 
 The work is rooted in an interest in patterns and their connection to our search for meaning. Polyrhythms mirror the cyclical nature of history—past, present, and what often feels like a repeating future. The installation embodies these cycles, inviting reflection on what it means to drift apart and come back together, both literally and figuratively.
 
-In a time when the world feels especially chaotic, *Polyrhythmic Illuminations* guides audiences through phases of discord and synchronization. Its slow, meditative unfolding acknowledges disorder while offering the possibility of realignment, renewed togetherness, and a future shaped by synchronicity rather than fragmentation. The work also acts as a provocation: what do we want our future together to be like? Will we strive for concordance or embrace chaos—and can one exist without the other?
+In a time when the world feels especially chaotic, *Polyrhythmic Illumination* guides audiences through phases of discord and synchronization. Its slow, meditative unfolding acknowledges disorder while offering the possibility of realignment, renewed togetherness, and a future shaped by synchronicity rather than fragmentation. The work also acts as a provocation: what do we want our future together to be like? Will we strive for concordance or embrace chaos—and can one exist without the other?
 
 ---
 
@@ -45,7 +45,7 @@ From an accessibility perspective, the experience is limited only by the accessi
 
 ### Audience Experience
 
-Audiences at previous installations of *Polyrhythmic Illuminations* have described the work as mesmerizing and meditative. Complex patterns emerging from simple behaviours resonate on a visceral level.
+Audiences at previous installations of *Polyrhythmic Illumination* have described the work as mesmerizing and meditative. Complex patterns emerging from simple behaviours resonate on a visceral level.
 
 The installation encourages community interaction. Families and children share photos on social media, and visitors often discuss the mathematics and rhythms behind the patterns. As crowds thin later in the night, curious visitors may be invited to control aspects of the system’s behaviour.
 
@@ -71,7 +71,7 @@ In theatre, his plays, including *Falling: A Wake*, *Pearl Gidley*, and *Queen M
 Rob Gorbet is a mechatronics engineer and technology artist who has exhibited collaborative works around the world. He collaborates with artists and architects to create unforgettable experiences for audiences. His work *Hylozoic Ground*, with Philip Beesley and the Living Architecture Systems Group, represented Canada at the Venice Biennale in 2010. He has also been a collaborator on two prior Nuit Blanche works: *Aurora* (2010) and *Ocean* (2016).
 
 **Matilda Pawlega – Electronics Artist**
-Instagram: [https://www.instagram.com/anoaeyto/](@anoaeyto)
+[https://www.instagram.com/anoaeyto/](@https://www.instagram.com/anoaeyto/)
 
 **Shaan Sawrup – Audio Composition**
 [https://opalsounds.bandcamp.com/](https://opalsounds.bandcamp.com/)

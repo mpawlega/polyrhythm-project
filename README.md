@@ -1,9 +1,9 @@
 
 ### Polyrhythmic Illumination
 
-Project Members: Gary Kirkham, Rob Gorbet, Shaan Armaan Sawrup, and Matilda Pawlega
+Project Members: Gary Kirkham, Rob Gorbet, Shaan Armaan Sawrup, and Matilda Pawlega.
 
---
+---
 
 Fifteen glowing tubes pulse, drift, and collide, sculpting light and sound into living rhythms. Part puzzle, part engineered light play, the installation is mesmerizing to see and hear.
 
@@ -71,7 +71,7 @@ In theatre, his plays, including *Falling: A Wake*, *Pearl Gidley*, and *Queen M
 Rob Gorbet is a mechatronics engineer and technology artist who has exhibited collaborative works around the world. He collaborates with artists and architects to create unforgettable experiences for audiences. His work *Hylozoic Ground*, with Philip Beesley and the Living Architecture Systems Group, represented Canada at the Venice Biennale in 2010. He has also been a collaborator on two prior Nuit Blanche works: *Aurora* (2010) and *Ocean* (2016).
 
 **Matilda Pawlega – Electronics Artist**
-Instagram: @anoaeyto
+Instagram: [https://www.instagram.com/anoaeyto/](@anoaeyto)
 
 **Shaan Sawrup – Audio Composition**
 [https://opalsounds.bandcamp.com/](https://opalsounds.bandcamp.com/)

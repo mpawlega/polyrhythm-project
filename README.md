@@ -75,8 +75,12 @@ Rob Gorbet is a mechatronics engineer and technology artist who has exhibited co
 **Matilda Pawlega – Electronics Artist**
 [https://www.instagram.com/anoaeyto/](https://www.instagram.com/anoaeyto/)
 
+Matilda Pawlega holds a bachelor’s degree in physics and astronomy and is a creative based in Waterloo, Ontario. She has worked in interdisciplinary spaces, with experience in interactive exhibitions, game development, graphic design, and visual storytelling under the name anoaeyto. She is part of student-led spaces such as Socratica and the University of Waterloo Tea Club to connect through creativity and design.
+
 **Shaan Sawrup – Audio Composition**
 [https://opalsounds.bandcamp.com/](https://opalsounds.bandcamp.com/)
+
+Shaan Sawrup is an engineering student and an ambient/electronic musician based out of Waterloo, Ontario. He has been recording and performing electronic music for over 5 years under the names Opals, Concrete Castles, and others. He is part of the student-led PRISM Collective which is a community of art-tech makers in UWaterloo, and is the founder of Waveform Collective, a non-profit focused on building community within electronic music in Waterloo Region.
 
 Matilda Pawlega and Shaan Sawrup are students at the University of Waterloo and members of the PRISM Collective, a boundary-breaking Waterloo student design team encouraging new forms of design and expression among STEM-oriented students.
 

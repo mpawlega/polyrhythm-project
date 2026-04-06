@@ -1,13 +1,13 @@
 
 ### Polyrhythmic Illumination
 
-Project Members: Gary Kirkham, Rob Gorbet, Shaan Armaan Sawrup, and Matilda Pawlega.
+Project Members, The Illuminators: Gary Kirkham, Rob Gorbet, Shaan Armaan Sawrup, and Matilda Pawlega.
 
 ---
 
 ### View the Installation Live
 
-Learn more about the project and see it in action here: [View the project](https://mpawlega.github.io/polyrhythm-project/).
+Learn more about the project and see it in action here: [Polyrhythmic Illumination](https://mpawlega.github.io/polyrhythm-project/).
 
 ### What is Polyrhythmic Illumination?
 
